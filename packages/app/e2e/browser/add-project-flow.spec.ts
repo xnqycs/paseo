@@ -575,6 +575,8 @@ test.describe("Add Project command-center flow", () => {
       // Stop only the selected isolated daemon (same port/home). Never touch port 6767.
       await secondary.stop();
       const serverInfoCountBeforeRestart = secondaryGate.getServerInfoCount(disconnectHostId);
+      const bootstrapCountBeforeRestart =
+        secondaryGate.getClientRequestCount("fetch_agents_request");
 
       // Force a fresh directory query against the now-offline host.
       const offlineQuery = `${searchableName}-offline`;
@@ -590,6 +592,10 @@ test.describe("Add Project command-center flow", () => {
       // Stay on the directory-search page — recovery is a new query after reconnect.
       await secondary.restart();
       await secondaryGate.waitForServerInfo(disconnectHostId, serverInfoCountBeforeRestart + 1);
+      await secondaryGate.waitForClientRequest(
+        "fetch_agents_request",
+        bootstrapCountBeforeRestart + 1,
+      );
 
       // This directory and query did not exist before restart, so neither the
       // daemon nor React Query can satisfy recovery from pre-disconnect state.

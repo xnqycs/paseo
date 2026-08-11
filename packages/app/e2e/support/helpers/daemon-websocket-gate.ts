@@ -262,6 +262,7 @@ export async function installDaemonWebSocketGate(page: Page, options?: { port?: 
   const clientRequestCounts = new Map<string, number>();
   const directorySuggestionRequestCounts = new Map<string, number>();
   const timelineRequestCounts = new Map<string, number>();
+  const clientRequestWaiters = new Set<() => void>();
   const serverMessageCounts = new Map<string, number>();
   const serverInfoCounts = new Map<string, number>();
   const agentStreamEventCounts = new Map<string, number>();
@@ -416,6 +417,8 @@ export async function installDaemonWebSocketGate(page: Page, options?: { port?: 
         timelineRequestCounts,
         directoryStarts,
       );
+      for (const resolve of clientRequestWaiters) resolve();
+      clientRequestWaiters.clear();
       if (request?.type === heldClientRequestType) {
         heldClientRequest = { server, message };
         resolveHeldClientRequest?.();
@@ -732,6 +735,11 @@ export async function installDaemonWebSocketGate(page: Page, options?: { port?: 
     },
     getClientRequestCount(type: string): number {
       return clientRequestCounts.get(type) ?? 0;
+    },
+    async waitForClientRequest(type: string, count = 1): Promise<void> {
+      while ((clientRequestCounts.get(type) ?? 0) < count) {
+        await new Promise<void>((resolve) => clientRequestWaiters.add(resolve));
+      }
     },
     getDirectorySuggestionsRequestCount(query: string): number {
       return directorySuggestionRequestCounts.get(query) ?? 0;
