@@ -1,5 +1,5 @@
 import type { Page, WebSocketRoute } from "@playwright/test";
-import { daemonWsRoutePattern } from "./daemon-port";
+import { daemonWsRoutePattern, wsRoutePatternForPort } from "./daemon-port";
 
 export interface DirectoryBootstrapCounts {
   agents: number;
@@ -14,6 +14,7 @@ export interface DirectoryRequestStartCounts {
 
 interface ClientRequest {
   type?: unknown;
+  query?: unknown;
   direction?: unknown;
   subscribe?: unknown;
   page?: { cursor?: unknown };
@@ -71,6 +72,15 @@ function readClientRequest(message: string | Buffer): ClientRequest | null {
   } catch {
     return null;
   }
+}
+
+function serverInfoServerId(message: ClientRequest | null): string | null {
+  if (message?.type !== "status" || typeof message.payload !== "object" || !message.payload) {
+    return null;
+  }
+  const payload = message.payload as { status?: unknown; serverId?: unknown };
+  if (payload.status !== "server_info" || typeof payload.serverId !== "string") return null;
+  return payload.serverId;
 }
 
 function directoryForRequest(request: ClientRequest): keyof DirectoryBootstrapCounts | null {
@@ -201,11 +211,18 @@ function matchesAgentUpdate(message: ClientRequest | null, agentUpdate: HeldAgen
 function recordClientRequest(
   request: ClientRequest | null,
   clientRequestCounts: Map<string, number>,
+  directorySuggestionRequestCounts: Map<string, number>,
   timelineRequestCounts: Map<string, number>,
   directoryStarts: DirectoryRequestStartCounts,
 ): void {
   if (typeof request?.type !== "string") return;
   clientRequestCounts.set(request.type, (clientRequestCounts.get(request.type) ?? 0) + 1);
+  if (request.type === "directory_suggestions_request" && typeof request.query === "string") {
+    directorySuggestionRequestCounts.set(
+      request.query,
+      (directorySuggestionRequestCounts.get(request.query) ?? 0) + 1,
+    );
+  }
   if (request.type === "fetch_agent_timeline_request" && typeof request.direction === "string") {
     timelineRequestCounts.set(
       request.direction,
@@ -219,7 +236,7 @@ function recordClientRequest(
   directoryStarts.total[directory] += 1;
 }
 
-export async function installDaemonWebSocketGate(page: Page) {
+export async function installDaemonWebSocketGate(page: Page, options?: { port?: number }) {
   let acceptingConnections = true;
   let reconnectWithFreshClient = false;
   let suppressAgentStream = false;
@@ -243,8 +260,10 @@ export async function installDaemonWebSocketGate(page: Page) {
     total: { agents: 0, workspaces: 0 },
   };
   const clientRequestCounts = new Map<string, number>();
+  const directorySuggestionRequestCounts = new Map<string, number>();
   const timelineRequestCounts = new Map<string, number>();
   const serverMessageCounts = new Map<string, number>();
+  const serverInfoCounts = new Map<string, number>();
   const agentStreamEventCounts = new Map<string, number>();
   const agentStreamItemCounts = new Map<string, number>();
   const serverMessageWaiters = new Set<() => void>();
@@ -276,10 +295,12 @@ export async function installDaemonWebSocketGate(page: Page) {
 
   const recordServerMessage = (message: ClientRequest | null): void => {
     const messageType = typeof message?.type === "string" ? message.type : null;
+    const serverId = serverInfoServerId(message);
     const itemType = readAgentStreamItemType(message);
     const eventType = readAgentStreamEventType(message);
     if (messageType)
       serverMessageCounts.set(messageType, (serverMessageCounts.get(messageType) ?? 0) + 1);
+    if (serverId) serverInfoCounts.set(serverId, (serverInfoCounts.get(serverId) ?? 0) + 1);
     if (itemType)
       agentStreamItemCounts.set(itemType, (agentStreamItemCounts.get(itemType) ?? 0) + 1);
     if (eventType)
@@ -361,7 +382,11 @@ export async function installDaemonWebSocketGate(page: Page) {
     return true;
   };
 
-  await page.routeWebSocket(daemonWsRoutePattern(), (ws) => {
+  const routePattern =
+    options?.port === undefined
+      ? daemonWsRoutePattern()
+      : wsRoutePatternForPort(String(options.port));
+  await page.routeWebSocket(routePattern, (ws) => {
     if (!acceptingConnections) {
       void ws.close({ code: 1008, reason: "Blocked by reconnect test." });
       return;
@@ -384,7 +409,13 @@ export async function installDaemonWebSocketGate(page: Page) {
         }
       }
       const request = readClientRequest(message);
-      recordClientRequest(request, clientRequestCounts, timelineRequestCounts, directoryStarts);
+      recordClientRequest(
+        request,
+        clientRequestCounts,
+        directorySuggestionRequestCounts,
+        timelineRequestCounts,
+        directoryStarts,
+      );
       if (request?.type === heldClientRequestType) {
         heldClientRequest = { server, message };
         resolveHeldClientRequest?.();
@@ -702,6 +733,12 @@ export async function installDaemonWebSocketGate(page: Page) {
     getClientRequestCount(type: string): number {
       return clientRequestCounts.get(type) ?? 0;
     },
+    getDirectorySuggestionsRequestCount(query: string): number {
+      return directorySuggestionRequestCounts.get(query) ?? 0;
+    },
+    getServerInfoCount(serverId: string): number {
+      return serverInfoCounts.get(serverId) ?? 0;
+    },
     getTimelineRequestCount(direction: "tail" | "before" | "after"): number {
       return timelineRequestCounts.get(direction) ?? 0;
     },
@@ -710,6 +747,11 @@ export async function installDaemonWebSocketGate(page: Page) {
     },
     async waitForServerMessage(type: string, count = 1): Promise<void> {
       while ((serverMessageCounts.get(type) ?? 0) < count) {
+        await new Promise<void>((resolve) => serverMessageWaiters.add(resolve));
+      }
+    },
+    async waitForServerInfo(serverId: string, count = 1): Promise<void> {
+      while ((serverInfoCounts.get(serverId) ?? 0) < count) {
         await new Promise<void>((resolve) => serverMessageWaiters.add(resolve));
       }
     },

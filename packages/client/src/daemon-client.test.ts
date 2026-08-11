@@ -3545,14 +3545,15 @@ test("writes project config via correlated RPC and returns inline failures", asy
   });
 });
 
-test("requests directory suggestions via RPC", async () => {
-  const logger = createMockLogger();
+async function connectDirectorySuggestionsClient(options?: { logger?: Logger }): Promise<{
+  client: DaemonClient;
+  mock: ReturnType<typeof createMockTransport>;
+}> {
   const mock = createMockTransport();
-
   const client = new DaemonClient({
     url: "ws://test",
     clientId: "clsk_unit_test",
-    logger,
+    logger: options?.logger ?? createMockLogger(),
     reconnect: { enabled: false },
     transportFactory: () => mock.transport,
   });
@@ -3561,6 +3562,28 @@ test("requests directory suggestions via RPC", async () => {
   const connectPromise = client.connect();
   mock.triggerOpen();
   await connectPromise;
+  return { client, mock };
+}
+
+function directorySuggestionsResponse(payload: {
+  directories?: string[];
+  entries?: Array<{ path: string; kind: "file" | "directory" }>;
+  error?: string | null;
+  requestId: string;
+}): string {
+  return wrapSessionMessage({
+    type: "directory_suggestions_response",
+    payload: {
+      ...(payload.directories !== undefined ? { directories: payload.directories } : {}),
+      ...(payload.entries !== undefined ? { entries: payload.entries } : {}),
+      ...(payload.error !== undefined ? { error: payload.error } : {}),
+      requestId: payload.requestId,
+    },
+  });
+}
+
+test("requests directory suggestions via RPC", async () => {
+  const { client, mock } = await connectDirectorySuggestionsClient();
 
   const promise = client.getDirectorySuggestions(
     {
@@ -3586,25 +3609,171 @@ test("requests directory suggestions via RPC", async () => {
   expect(request.requestId).toBe("req-directories");
 
   mock.triggerMessage(
-    JSON.stringify({
-      type: "session",
-      message: {
-        type: "directory_suggestions_response",
-        payload: {
-          directories: ["/Users/test/projects/paseo"],
-          entries: [{ path: "README.md", kind: "file" }],
-          error: null,
-          requestId: "req-directories",
-        },
-      },
+    directorySuggestionsResponse({
+      directories: ["/Users/test/projects/paseo"],
+      entries: [
+        { path: "/Users/test/projects/paseo", kind: "directory" },
+        { path: "README.md", kind: "file" },
+      ],
+      error: null,
+      requestId: "req-directories",
     }),
   );
 
   await expect(promise).resolves.toEqual({
     directories: ["/Users/test/projects/paseo"],
-    entries: [{ path: "README.md", kind: "file" }],
+    entries: [
+      { path: "/Users/test/projects/paseo", kind: "directory" },
+      { path: "README.md", kind: "file" },
+    ],
     error: null,
     requestId: "req-directories",
+  });
+});
+
+test("resolves only the response with the matching requestId for directory suggestions", async () => {
+  const { client, mock } = await connectDirectorySuggestionsClient();
+
+  const older = client.getDirectorySuggestions({ query: "old" }, "req-dir-old");
+  const newer = client.getDirectorySuggestions({ query: "new" }, "req-dir-new");
+
+  mock.triggerMessage(
+    directorySuggestionsResponse({
+      directories: ["/tmp/new"],
+      entries: [{ path: "/tmp/new", kind: "directory" }],
+      error: null,
+      requestId: "req-dir-new",
+    }),
+  );
+  mock.triggerMessage(
+    directorySuggestionsResponse({
+      directories: ["/tmp/old"],
+      entries: [{ path: "/tmp/old", kind: "directory" }],
+      error: null,
+      requestId: "req-dir-old",
+    }),
+  );
+
+  await expect(newer).resolves.toEqual({
+    directories: ["/tmp/new"],
+    entries: [{ path: "/tmp/new", kind: "directory" }],
+    error: null,
+    requestId: "req-dir-new",
+  });
+  await expect(older).resolves.toEqual({
+    directories: ["/tmp/old"],
+    entries: [{ path: "/tmp/old", kind: "directory" }],
+    error: null,
+    requestId: "req-dir-old",
+  });
+});
+
+test("normalizes a legacy directory suggestions response that omits entries", async () => {
+  const { client, mock } = await connectDirectorySuggestionsClient();
+
+  const promise = client.getDirectorySuggestions({ query: "paseo" }, "req-dir-legacy");
+
+  mock.triggerMessage(
+    directorySuggestionsResponse({
+      directories: ["/Users/test/projects/paseo", "/Users/test/archive/paseo"],
+      error: null,
+      requestId: "req-dir-legacy",
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    directories: ["/Users/test/projects/paseo", "/Users/test/archive/paseo"],
+    entries: [
+      { path: "/Users/test/projects/paseo", kind: "directory" },
+      { path: "/Users/test/archive/paseo", kind: "directory" },
+    ],
+    error: null,
+    requestId: "req-dir-legacy",
+  });
+});
+
+test("preserves typed directory suggestion entries without reordering or filtering", async () => {
+  const { client, mock } = await connectDirectorySuggestionsClient();
+
+  const promise = client.getDirectorySuggestions(
+    {
+      query: "src",
+      includeDirectories: true,
+      includeFiles: true,
+    },
+    "req-typed-entries",
+  );
+
+  mock.triggerMessage(
+    directorySuggestionsResponse({
+      directories: ["/tmp/src"],
+      entries: [
+        { path: "/tmp/src/file.ts", kind: "file" },
+        { path: "/tmp/src", kind: "directory" },
+      ],
+      error: null,
+      requestId: "req-typed-entries",
+    }),
+  );
+
+  await expect(promise).resolves.toEqual({
+    directories: ["/tmp/src"],
+    entries: [
+      { path: "/tmp/src/file.ts", kind: "file" },
+      { path: "/tmp/src", kind: "directory" },
+    ],
+    error: null,
+    requestId: "req-typed-entries",
+  });
+});
+
+test("rejects a malformed directory suggestions response without leaking a pending request", async () => {
+  const warnings: string[] = [];
+  const logger: Logger = {
+    ...noopLogger,
+    warn: (_fields, message) => warnings.push(message ?? ""),
+  };
+  const { client, mock } = await connectDirectorySuggestionsClient({ logger });
+
+  const promise = client.getDirectorySuggestions({ query: "proj" }, "req-dir-malformed");
+
+  mock.triggerMessage(
+    directorySuggestionsResponse({
+      // Missing required `directories` and `error` fields.
+      requestId: "req-dir-malformed",
+    }),
+  );
+
+  await expect(promise).rejects.toMatchObject({
+    requestId: "req-dir-malformed",
+    message: expect.stringMatching(/validation/i),
+  });
+  expect(warnings).toEqual(["Message validation failed"]);
+
+  // The pending waiter must already be gone so a late valid response is ignored.
+  const followUp = client.getDirectorySuggestions({ query: "proj" }, "req-dir-follow-up");
+  mock.triggerMessage(
+    directorySuggestionsResponse({
+      directories: ["/tmp/proj"],
+      entries: [{ path: "/tmp/proj", kind: "directory" }],
+      error: null,
+      requestId: "req-dir-malformed",
+    }),
+  );
+  mock.triggerMessage(
+    directorySuggestionsResponse({
+      directories: ["/tmp/proj"],
+      entries: [{ path: "/tmp/proj", kind: "directory" }],
+      error: null,
+      requestId: "req-dir-follow-up",
+    }),
+  );
+
+  await expect(followUp).resolves.toEqual({
+    directories: ["/tmp/proj"],
+    entries: [{ path: "/tmp/proj", kind: "directory" }],
+    error: null,
+    requestId: "req-dir-follow-up",
   });
 });
 

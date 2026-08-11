@@ -491,6 +491,117 @@ describe("absolute directory-path configuration", () => {
     rmSync(tempRoot, { recursive: true, force: true });
   });
 
+  it("returns a matching child directory for a simple query", async () => {
+    const results = await searchAbsoluteDirectoryPaths({
+      homeDir,
+      query: "paseo",
+    });
+
+    expect(results.map((entry) => realpathSync.native(entry))).toEqual([
+      realpathSync.native(path.join(homeDir, "projects", "paseo")),
+    ]);
+  });
+
+  it("returns directories and excludes files when includeFiles is false", async () => {
+    // Same basename stem as the existing README.md file so the filter is not vacuously true.
+    mkdirSync(path.join(homeDir, "projects", "README"), { recursive: true });
+
+    const results = await searchDirectoryEntries({
+      root: homeDir,
+      query: "README",
+      pathFormat: "relative",
+      includeDirectories: true,
+      includeFiles: false,
+    });
+
+    expect(results).toEqual([{ path: "projects/README", kind: "directory" }]);
+  });
+
+  it("returns files only when includeFiles is true", async () => {
+    const results = await searchDirectoryEntries({
+      root: homeDir,
+      query: "README",
+      pathFormat: "relative",
+      includeDirectories: false,
+      includeFiles: true,
+    });
+
+    expect(results).toEqual([{ path: "projects/README.md", kind: "file" }]);
+  });
+
+  it("returns an empty list when both entry kinds are disabled", async () => {
+    const results = await searchDirectoryEntries({
+      root: homeDir,
+      query: "paseo",
+      pathFormat: "absolute",
+      includeDirectories: false,
+      includeFiles: false,
+    });
+
+    expect(results).toEqual([]);
+  });
+
+  it("returns no result for a missing root", async () => {
+    const results = await searchDirectoryEntries({
+      root: path.join(tempRoot, "does-not-exist"),
+      query: "paseo",
+      pathFormat: "absolute",
+      includeDirectories: true,
+      includeFiles: false,
+    });
+
+    expect(results).toEqual([]);
+  });
+
+  it("does not return a path outside the search root", async () => {
+    const results = await searchDirectoryEntries({
+      root: homeDir,
+      query: outsideDir,
+      pathFormat: "absolute",
+      includeDirectories: true,
+      includeFiles: false,
+      pathQueryPolicy: "rooted",
+      rootAliases: ["~"],
+    });
+
+    expect(results).toEqual([]);
+  });
+
+  it("returns no home entries for a blank absolute search", async () => {
+    const results = await searchAbsoluteDirectoryPaths({
+      homeDir,
+      query: "   ",
+    });
+
+    expect(results).toEqual([]);
+  });
+
+  it("returns deterministic results and respects the configured limit", async () => {
+    mkdirSync(path.join(homeDir, "alpha"), { recursive: true });
+    mkdirSync(path.join(homeDir, "alphabet"), { recursive: true });
+    mkdirSync(path.join(homeDir, "myalpha"), { recursive: true });
+    mkdirSync(path.join(homeDir, "zeta"), { recursive: true });
+
+    const expected = [
+      realpathSync.native(path.join(homeDir, "alpha")),
+      realpathSync.native(path.join(homeDir, "alphabet")),
+    ];
+
+    const first = await searchAbsoluteDirectoryPaths({
+      homeDir,
+      query: "alpha",
+      limit: 2,
+    });
+    const second = await searchAbsoluteDirectoryPaths({
+      homeDir,
+      query: "alpha",
+      limit: 2,
+    });
+
+    expect(first.map((entry) => realpathSync.native(entry))).toEqual(expected);
+    expect(second.map((entry) => realpathSync.native(entry))).toEqual(expected);
+  });
+
   it("does not inspect directories when the scan budget is zero", async () => {
     await expect(
       searchAbsoluteDirectoryPaths({
@@ -691,6 +802,33 @@ describe("relative typed-entry configuration", () => {
 
   afterEach(() => {
     rmSync(tempRoot, { recursive: true, force: true });
+  });
+
+  it("returns relative paths for a workspace query", async () => {
+    const results = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "components",
+      limit: 10,
+      includeDirectories: true,
+      includeFiles: false,
+    });
+
+    expect(results).toEqual([{ path: "src/components", kind: "directory" }]);
+  });
+
+  it("lists only immediate workspace children for a blank query", async () => {
+    const results = await searchRelativeDirectoryEntries({
+      cwd: workspaceDir,
+      query: "",
+      limit: 10,
+      includeDirectories: true,
+      includeFiles: false,
+    });
+
+    expect(results).toEqual([
+      { path: "docs", kind: "directory" },
+      { path: "src", kind: "directory" },
+    ]);
   });
 
   it("ranks fuzzy basename matches after exact, prefix, and substring matches", async () => {

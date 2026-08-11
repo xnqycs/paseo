@@ -64,6 +64,7 @@ import {
 } from "@/add-project-flow/options";
 import {
   buildProjectPickerOptions,
+  shouldFetchAddProjectDirectories,
   type ProjectPickerOption,
 } from "@/components/project-picker-options";
 import { Shortcut } from "@/components/ui/shortcut";
@@ -136,6 +137,10 @@ const EMPTY_PATHS: string[] = [];
 const NAVIGATION_HINT_KEYS = ["Up", "Down"];
 const SELECT_HINT_KEYS = ["Enter"];
 const ESCAPE_HINT_KEYS = ["Esc"];
+/** Debounce window before a directory-search query is sent to the selected host. */
+const DIRECTORY_SEARCH_DEBOUNCE_MS = 250;
+/** Default result cap for Add Project directory queries. */
+const DIRECTORY_SEARCH_LIMIT = 30;
 
 function FlowBackButton({ onPress }: { onPress: () => void }) {
   return (
@@ -186,13 +191,16 @@ function emptyText(page: AddProjectPage, host: AddProjectHost | null): string {
 interface QueryErrorInput {
   searchesDirectories: boolean;
   directoryFailed: boolean;
+  directoryError: string | null;
   githubFailed: boolean;
   githubAvailable: boolean | null;
   githubError: string | null;
 }
 
 function queryErrorText(input: QueryErrorInput): string | null {
-  if (input.searchesDirectories && input.directoryFailed) return "Unable to search directories";
+  if (input.searchesDirectories && input.directoryFailed) {
+    return input.directoryError?.trim() || "Unable to search directories";
+  }
   if (input.githubFailed) return "Unable to search GitHub repositories";
   if (input.githubError) return input.githubError;
   if (input.githubAvailable === false) return input.githubError ?? "GitHub search is unavailable";
@@ -384,7 +392,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   }, [availableHosts, request.preferredHostId]);
 
   useEffect(() => {
-    const timer = setTimeout(() => setDebouncedQuery(query), 250);
+    const timer = setTimeout(() => setDebouncedQuery(query), DIRECTORY_SEARCH_DEBOUNCE_MS);
     return () => clearTimeout(timer);
   }, [query]);
 
@@ -397,6 +405,12 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     page.kind === "directory-search" ||
     page.kind === "github-location" ||
     page.kind === "new-directory-parent";
+  // Directory pages with a non-blank query want results even when the host client
+  // is temporarily gone (disconnect). Keep that signal separate from `enabled` so
+  // a failed query still renders a recoverable error after the socket drops.
+  const wantsDirectoryResults =
+    searchesDirectories && shouldFetchAddProjectDirectories(debouncedQuery);
+  const shouldFetchDirectories = Boolean(client) && wantsDirectoryResults;
   const directoryQuery = useFetchQuery({
     queryKey: ["add-project-flow-directories", hostId, debouncedQuery],
     queryFn: async () => {
@@ -405,16 +419,22 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         query: debouncedQuery,
         includeDirectories: true,
         includeFiles: false,
-        limit: 30,
+        limit: DIRECTORY_SEARCH_LIMIT,
       });
+      // Explicit null check: empty-string errors must still surface as failures.
+      if (payload.error !== null) {
+        throw new Error(payload.error);
+      }
+      // Client already normalizes legacy `directories`-only responses into typed entries.
+      // Keep daemon order; only drop non-directory kinds for this picker.
       return {
         query: debouncedQuery,
-        paths:
-          payload.entries?.flatMap((entry) => (entry.kind === "directory" ? [entry.path] : [])) ??
-          [],
+        paths: payload.entries
+          .filter((entry) => entry.kind === "directory")
+          .map((entry) => entry.path),
       };
     },
-    enabled: Boolean(client && searchesDirectories),
+    enabled: shouldFetchDirectories,
     dataShape: "value",
     retry: false,
     staleTimeMs: 15_000,
@@ -820,8 +840,9 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       host?.canSearchGithubRepositories === true &&
       (query !== debouncedQuery || githubQuery.isFetching));
   const queryError = queryErrorText({
-    searchesDirectories,
+    searchesDirectories: wantsDirectoryResults,
     directoryFailed: directoryQuery.isError,
+    directoryError: directoryQuery.error instanceof Error ? directoryQuery.error.message : null,
     githubFailed: page.kind === "github-search" && githubQuery.isError,
     githubAvailable: currentGithubSearch?.available ?? null,
     githubError: currentGithubSearch?.error ?? null,

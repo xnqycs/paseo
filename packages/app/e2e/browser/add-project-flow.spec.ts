@@ -1,6 +1,6 @@
 import { randomUUID } from "node:crypto";
-import { mkdtemp, rm, stat } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { mkdir, mkdtemp, rm, stat } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import path from "node:path";
 import { test, expect } from "../support/fixtures";
 import {
@@ -12,10 +12,14 @@ import {
   chooseAddProjectMethod,
   expectAddProjectPage,
   expectNewWorkspaceForAddedProject,
+  failNextDirectorySuggestionWithBusinessError,
+  holdNextDirectorySuggestionsResponse,
   openAddProjectFlow,
   openAddProjectHostSelection,
+  rewriteDirectorySuggestionsToLegacy,
 } from "../support/helpers/add-project-flow";
 import { gotoAppShell } from "../support/helpers/app";
+import { installDaemonWebSocketGate } from "../support/helpers/daemon-websocket-gate";
 import {
   addConnectedHostAndReload,
   addOfflineHostAndReload,
@@ -273,6 +277,186 @@ test.describe("Add Project command-center flow", () => {
     await expectProjectHasNoWorkspaces(projectId);
   });
 
+  test("legacy directory suggestions without entries still render and open", async ({
+    page,
+    projectPickerFixture,
+  }) => {
+    await rewriteDirectorySuggestionsToLegacy(page);
+    await gotoAppShell(page);
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-search");
+
+    await addProjectFlowInput(page).fill(projectPickerFixture.fuzzyQuery);
+    const pathRow = page.getByTestId(
+      `add-project-flow-path-${encodeURIComponent(projectPickerFixture.projectPath)}`,
+    );
+    await expect(pathRow).toBeVisible({ timeout: 30_000 });
+    await pathRow.click();
+
+    const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
+    projectPickerFixture.rememberProjectId(projectId);
+    await expectNewWorkspaceForAddedProject(page, {
+      serverId: getServerId(),
+      projectId,
+      projectName: projectPickerFixture.projectName,
+      projectPath: projectPickerFixture.projectPath,
+    });
+  });
+
+  // Protocol-boundary injection: the first directory_suggestions response is a
+  // hand-built business error at the WebSocket gate. Recovery must forward the
+  // next request to the real daemon (page.unrouteAll does not clear WS routes).
+  test("one-shot protocol-boundary directory error stays visible and recovers after a new query", async ({
+    page,
+    projectPickerFixture,
+  }) => {
+    const searchError = "Directory search failed: permission denied for test root";
+    const gate = await failNextDirectorySuggestionWithBusinessError(page, searchError);
+    await gotoAppShell(page);
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-search");
+
+    await addProjectFlowInput(page).fill("will-fail-once");
+    const queryError = page.getByTestId("add-project-flow-query-error");
+    await expect(queryError).toBeVisible({ timeout: 30_000 });
+    await expect(queryError).toHaveText(searchError);
+    await expectAddProjectPage(page, "directory-search");
+    await expect(addProjectFlowInput(page)).toHaveValue("will-fail-once");
+    await expect(addProjectFlowInput(page)).toBeEditable();
+    expect(gate.injectedCount()).toBe(1);
+    expect(gate.forwardedCount()).toBe(0);
+
+    // One-shot gate: the second query is forwarded to the real daemon automatically.
+    await addProjectFlowInput(page).fill(projectPickerFixture.fuzzyQuery);
+    await expect(queryError).toHaveCount(0, { timeout: 30_000 });
+    await expect(addProjectFlow(page)).toContainText(projectPickerFixture.projectName, {
+      timeout: 30_000,
+    });
+    expect(gate.injectedCount()).toBe(1);
+    expect(gate.forwardedCount()).toBeGreaterThanOrEqual(1);
+  });
+
+  test("does not submit twice while add project is pending", async ({ page }) => {
+    const parentDirectory = await mkdtemp(path.join(tmpdir(), "paseo-e2e-add-pending-"));
+    const directoryName = `pending-${randomUUID().slice(0, 8)}`;
+    const directoryPath = path.join(parentDirectory, directoryName);
+    let projectId: string | null = null;
+    const gate = await installDaemonWebSocketGate(page);
+
+    try {
+      await mkdir(directoryPath, { recursive: true });
+      await gotoAppShell(page);
+      await openAddProjectFlow(page);
+      await chooseAddProjectMethod(page, "directory-search");
+
+      gate.holdNextClientRequest("project.add.request");
+      await addProjectFlowInput(page).fill(directoryPath);
+      await page.keyboard.press("Enter");
+      await gate.waitForHeldClientRequest();
+      await expect(page.getByTestId("add-project-flow-progress")).toBeVisible({ timeout: 30_000 });
+      await expect(addProjectFlowInput(page)).not.toBeEditable();
+
+      // Second submit must be ignored while the first add is still in flight.
+      await page.keyboard.press("Enter");
+      expect(gate.getClientRequestCount("project.add.request")).toBe(1);
+
+      gate.releaseHeldClientRequest();
+      projectId = await expectOpenedProject(page, directoryName);
+      await expectNewWorkspaceForAddedProject(page, {
+        serverId: getServerId(),
+        projectId,
+        projectName: directoryName,
+        projectPath: directoryPath,
+      });
+      expect(gate.getClientRequestCount("project.add.request")).toBe(1);
+    } finally {
+      await removeCreatedProject(directoryPath, projectId).catch(() => undefined);
+      await rm(parentDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("shows loading and then an empty result without collapsing the layout", async ({ page }) => {
+    const emptyQuery = `zzz-no-match-${randomUUID()}`;
+    const hold = await holdNextDirectorySuggestionsResponse(page);
+
+    await gotoAppShell(page);
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-search");
+
+    await addProjectFlowInput(page).fill(emptyQuery);
+    await hold.waitForHeld();
+    const loading = page.getByTestId("add-project-flow-loading");
+    await expect(loading).toBeVisible({ timeout: 30_000 });
+
+    const [resultsWhileLoading, footerWhileLoading] = await Promise.all([
+      page.getByTestId("add-project-flow-results").boundingBox(),
+      page.getByTestId("add-project-flow-footer").boundingBox(),
+    ]);
+    expect(resultsWhileLoading).not.toBeNull();
+    expect(footerWhileLoading).not.toBeNull();
+    if (!resultsWhileLoading || !footerWhileLoading) return;
+    expect(resultsWhileLoading.y + resultsWhileLoading.height).toBeLessThanOrEqual(
+      footerWhileLoading.y + 1,
+    );
+
+    hold.release();
+    await expect(loading).toHaveCount(0, { timeout: 30_000 });
+    const empty = page.getByTestId("add-project-flow-empty");
+    await expect(empty).toBeVisible({ timeout: 30_000 });
+    await expect(empty).toHaveText("No matching options");
+
+    const [resultsWhenEmpty, footerWhenEmpty] = await Promise.all([
+      page.getByTestId("add-project-flow-results").boundingBox(),
+      page.getByTestId("add-project-flow-footer").boundingBox(),
+    ]);
+    expect(resultsWhenEmpty).not.toBeNull();
+    expect(footerWhenEmpty).not.toBeNull();
+    if (!resultsWhenEmpty || !footerWhenEmpty) return;
+    expect(resultsWhenEmpty.y + resultsWhenEmpty.height).toBeLessThanOrEqual(footerWhenEmpty.y + 1);
+    // Footer stays anchored; loading → empty must not collapse the results rail away from it.
+    expect(Math.abs(footerWhenEmpty.y - footerWhileLoading.y)).toBeLessThanOrEqual(2);
+    expect(Math.abs(resultsWhenEmpty.y - resultsWhileLoading.y)).toBeLessThanOrEqual(2);
+  });
+
+  test("add project failure keeps the search page and allows retry", async ({ page }) => {
+    const missingPath = `/tmp/paseo-add-project-missing-${randomUUID()}`;
+    await gotoAppShell(page);
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-search");
+
+    await addProjectFlowInput(page).fill(missingPath);
+    await page.keyboard.press("Enter");
+
+    const error = page.getByTestId("add-project-flow-error");
+    await expect(error).toBeVisible({ timeout: 30_000 });
+    await expect(error).toContainText(/directory not found|unable to add project/i);
+    await expectAddProjectPage(page, "directory-search");
+    await expect(addProjectFlowInput(page)).toHaveValue(missingPath);
+    await expect(addProjectFlowInput(page)).toBeEditable();
+
+    // Correct the path to a real directory and submit again.
+    const parentDirectory = await mkdtemp(path.join(tmpdir(), "paseo-e2e-add-retry-"));
+    const directoryName = `retry-${randomUUID().slice(0, 8)}`;
+    const directoryPath = path.join(parentDirectory, directoryName);
+    let projectId: string | null = null;
+    try {
+      await mkdir(directoryPath, { recursive: true });
+      await addProjectFlowInput(page).fill(directoryPath);
+      await page.keyboard.press("Enter");
+
+      projectId = await expectOpenedProject(page, directoryName);
+      await expectNewWorkspaceForAddedProject(page, {
+        serverId: getServerId(),
+        projectId,
+        projectName: directoryName,
+        projectPath: directoryPath,
+      });
+    } finally {
+      await removeCreatedProject(directoryPath, projectId).catch(() => undefined);
+      await rm(parentDirectory, { recursive: true, force: true });
+    }
+  });
+
   test("the current daemon advertises Clone from GitHub and New directory", async ({ page }) => {
     await gotoAppShell(page);
     await openAddProjectFlow(page);
@@ -347,6 +531,82 @@ test.describe("Add Project command-center flow", () => {
     } finally {
       await removeCreatedProject(directoryPath, projectId).catch(() => undefined);
       await rm(parentDirectory, { recursive: true, force: true });
+    }
+  });
+
+  test("keeps the query and shows a recoverable error when the selected host disconnects", async ({
+    page,
+  }) => {
+    const disconnectHostId = "add-project-flow-disconnect";
+    const disconnectHostLabel = "Disconnect Host";
+    // Home-scoped directory search roots at $HOME for every daemon on this machine,
+    // including isolated secondary hosts — fixtures under /tmp are outside that root.
+    const searchRoot = await mkdtemp(path.join(homedir(), "paseo-e2e-disconnect-search-"));
+    const searchableName = `disc-${randomUUID().slice(0, 8)}`;
+    const searchablePath = path.join(searchRoot, searchableName);
+    const recoveryName = `recovered-${randomUUID().slice(0, 8)}`;
+    const recoveryPath = path.join(searchRoot, recoveryName);
+    let secondary: IsolatedHostDaemon | null = null;
+
+    try {
+      await mkdir(searchablePath, { recursive: true });
+      secondary = await startIsolatedHostDaemon(disconnectHostId);
+      const secondaryGate = await installDaemonWebSocketGate(page, { port: secondary.port });
+
+      await gotoAppShell(page);
+      await addConnectedHostAndReload(page, {
+        serverId: secondary.serverId,
+        label: disconnectHostLabel,
+        port: secondary.port,
+      });
+      await waitForConnectedHost(page, {
+        serverId: disconnectHostId,
+        endpoint: `localhost:${secondary.port}`,
+      });
+
+      await openAddProjectHostSelection(page);
+      await addProjectFlowHost(page, disconnectHostId).click();
+      await expectAddProjectPage(page, "method");
+      await chooseAddProjectMethod(page, "directory-search");
+
+      await addProjectFlowInput(page).fill(searchableName);
+      await expect(addProjectFlow(page)).toContainText(searchableName, { timeout: 30_000 });
+
+      // Stop only the selected isolated daemon (same port/home). Never touch port 6767.
+      await secondary.stop();
+      const serverInfoCountBeforeRestart = secondaryGate.getServerInfoCount(disconnectHostId);
+
+      // Force a fresh directory query against the now-offline host.
+      const offlineQuery = `${searchableName}-offline`;
+      await addProjectFlowInput(page).fill(offlineQuery);
+
+      const queryError = page.getByTestId("add-project-flow-query-error");
+      await expect(queryError).toBeVisible({ timeout: 30_000 });
+      await expectAddProjectPage(page, "directory-search");
+      await expect(addProjectFlowInput(page)).toHaveValue(offlineQuery);
+      await expect(addProjectFlowInput(page)).toBeEditable();
+
+      // Restart the same isolated daemon on the same port; host registry stays valid.
+      // Stay on the directory-search page — recovery is a new query after reconnect.
+      await secondary.restart();
+      await secondaryGate.waitForServerInfo(disconnectHostId, serverInfoCountBeforeRestart + 1);
+
+      // This directory and query did not exist before restart, so neither the
+      // daemon nor React Query can satisfy recovery from pre-disconnect state.
+      await mkdir(recoveryPath, { recursive: true });
+      await addProjectFlowInput(page).fill(recoveryName);
+      const resultRow = page.getByTestId(
+        `add-project-flow-path-${encodeURIComponent(recoveryPath)}`,
+      );
+      await expect(resultRow).toBeVisible({ timeout: 30_000 });
+      expect(secondaryGate.getDirectorySuggestionsRequestCount(recoveryName)).toBe(1);
+      await expect(queryError).toHaveCount(0);
+      await expectAddProjectPage(page, "directory-search");
+      await expect(addProjectFlowInput(page)).toHaveValue(recoveryName);
+      await expect(addProjectFlowInput(page)).toBeEditable();
+    } finally {
+      await secondary?.close().catch(() => undefined);
+      await rm(searchRoot, { recursive: true, force: true });
     }
   });
 });

@@ -17,6 +17,7 @@ export interface IsolatedHostDaemon {
   port: number;
   paseoHome: string;
   getPid(): number | undefined;
+  stop(): Promise<void>;
   restart(): Promise<void>;
   close(): Promise<void>;
 }
@@ -214,6 +215,10 @@ export async function startIsolatedHostDaemon(
     port,
     paseoHome,
     getPid: () => child.pid,
+    stop: async () => {
+      if (closed) throw new Error(`Cannot stop closed isolated daemon ${serverId}`);
+      await stopProcess(child);
+    },
     restart: async () => {
       if (closed) throw new Error(`Cannot restart closed isolated daemon ${serverId}`);
       await stopProcess(child);

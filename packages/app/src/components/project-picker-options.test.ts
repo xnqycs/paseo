@@ -1,5 +1,9 @@
 import { describe, expect, it } from "vitest";
-import { buildProjectPickerOptions, isOpenableProjectPath } from "./project-picker-options";
+import {
+  buildProjectPickerOptions,
+  isOpenableProjectPath,
+  shouldFetchAddProjectDirectories,
+} from "./project-picker-options";
 
 describe("isOpenableProjectPath", () => {
   it("accepts POSIX, tilde, Windows drive-letter, and UNC paths", () => {
@@ -76,5 +80,40 @@ describe("buildProjectPickerOptions", () => {
     });
 
     expect(options).toEqual([{ kind: "suggestion", path: "/repo/app" }]);
+  });
+
+  it("merges recommended and daemon directories once with stable order", () => {
+    expect(
+      buildProjectPickerOptions({
+        recommendedPaths: ["/Users/me/projects/paseo", "/Users/me/archive/old"],
+        serverPaths: ["/Users/me/projects/paseo", "/Users/me/projects/playground"],
+        query: "pso",
+      }),
+    ).toEqual([
+      { kind: "suggestion", path: "/Users/me/projects/paseo" },
+      { kind: "suggestion", path: "/Users/me/projects/playground" },
+    ]);
+  });
+
+  it("does not locally reinterpret a daemon result for a correlated query", () => {
+    expect(
+      buildProjectPickerOptions({
+        recommendedPaths: [],
+        serverPaths: ["/Users/me/projects/ranked-by-daemon"],
+        query: "a-query-owned-by-the-daemon",
+      }),
+    ).toEqual([{ kind: "suggestion", path: "/Users/me/projects/ranked-by-daemon" }]);
+  });
+});
+
+describe("shouldFetchAddProjectDirectories", () => {
+  it("skips blank home searches so recommendations do not trigger a full-home scan", () => {
+    expect(shouldFetchAddProjectDirectories("")).toBe(false);
+    expect(shouldFetchAddProjectDirectories("   ")).toBe(false);
+  });
+
+  it("fetches once the user has a non-empty query", () => {
+    expect(shouldFetchAddProjectDirectories("paseo")).toBe(true);
+    expect(shouldFetchAddProjectDirectories("~/projects")).toBe(true);
   });
 });

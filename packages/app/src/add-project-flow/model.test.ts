@@ -13,6 +13,7 @@ import {
   setAddProjectActiveIndex,
   setAddProjectPageInput,
   setNewDirectoryName,
+  updateCurrentAddProjectPage,
   type AddProjectHost,
 } from "./model";
 import {
@@ -44,6 +45,47 @@ describe("Add Project navigation", () => {
       isSubmitting: false,
     });
     expect(backAddProjectPage(state)).toBeNull();
+  });
+
+  it("opens directory-search with a clean query and active index", () => {
+    let state = openAddProjectFlow({ hosts: [HOST] });
+    state = openDirectorySearchPage(state, HOST.serverId);
+
+    expect(currentAddProjectPage(state)).toEqual({
+      kind: "directory-search",
+      hostId: "host-1",
+      query: "",
+      activeIndex: 0,
+      error: null,
+      isSubmitting: false,
+    });
+  });
+
+  it("resets active index and error when the directory query changes", () => {
+    let state = openAddProjectFlow({ hosts: [HOST] });
+    state = openDirectorySearchPage(state, HOST.serverId);
+    state = setAddProjectActiveIndex(state, 2);
+    state = updateCurrentAddProjectPage(state, (page) =>
+      page.kind === "directory-search" ? { ...page, error: "Unable to search directories" } : page,
+    );
+
+    state = setAddProjectPageInput(state, "paseo");
+
+    expect(currentAddProjectPage(state)).toEqual({
+      kind: "directory-search",
+      hostId: "host-1",
+      query: "paseo",
+      activeIndex: 0,
+      error: null,
+      isSubmitting: false,
+    });
+  });
+
+  it("moves over selectable directory rows and wraps at both ends", () => {
+    expect(moveAddProjectSelection(0, [true, false, true, false], "next")).toBe(2);
+    expect(moveAddProjectSelection(2, [true, false, true, false], "next")).toBe(0);
+    expect(moveAddProjectSelection(0, [true, false, true, false], "previous")).toBe(2);
+    expect(moveAddProjectSelection(2, [true, false, true, false], "previous")).toBe(0);
   });
 
   it("restores page input and selection after Back", () => {

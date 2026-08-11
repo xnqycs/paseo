@@ -6,6 +6,15 @@ export interface BuildProjectPickerOptionsInput {
   query: string;
 }
 
+/**
+ * Home-scoped Add Project search never needs a blank query.
+ * Blank input only shows local recommendations; the daemon short-circuits blank
+ * absolute searches, but skipping the RPC avoids a pointless round-trip.
+ */
+export function shouldFetchAddProjectDirectories(query: string): boolean {
+  return query.trim().length > 0;
+}
+
 export interface ProjectPickerPathOption {
   kind: "path";
   path: string;

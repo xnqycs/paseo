@@ -376,6 +376,67 @@ describe("shared messages stream parsing", () => {
     expect(responseParsed.success).toBe(true);
   });
 
+  it("parses a legacy directory suggestions response that omits entries", () => {
+    const responseParsed = SessionOutboundMessageSchema.safeParse({
+      type: "directory_suggestions_response",
+      payload: {
+        directories: ["/Users/test/projects/paseo"],
+        error: null,
+        requestId: "req-dir-legacy",
+      },
+    });
+
+    expect(responseParsed.success).toBe(true);
+    if (!responseParsed.success) {
+      throw new Error("expected legacy directory suggestions response to parse");
+    }
+    // Wire parser must accept the legacy shape without inventing entries.
+    // Normalization to typed entries belongs to the daemon client boundary.
+    expect(responseParsed.data).toEqual({
+      type: "directory_suggestions_response",
+      payload: {
+        directories: ["/Users/test/projects/paseo"],
+        error: null,
+        requestId: "req-dir-legacy",
+      },
+    });
+    expect(responseParsed.data.payload.entries).toBeUndefined();
+  });
+
+  it("parses a minimal directory suggestions request with optional filters", () => {
+    const minimal = SessionInboundMessageSchema.safeParse({
+      type: "directory_suggestions_request",
+      query: "proj",
+      requestId: "req-dir-min",
+    });
+    expect(minimal.success).toBe(true);
+
+    const filtered = SessionInboundMessageSchema.safeParse({
+      type: "directory_suggestions_request",
+      query: "src/co",
+      cwd: "/tmp/workspace",
+      includeFiles: false,
+      includeDirectories: true,
+      matchMode: "fuzzy",
+      limit: 30,
+      requestId: "req-dir-filters",
+    });
+    expect(filtered.success).toBe(true);
+    if (!filtered.success) {
+      throw new Error("expected filtered directory suggestions request to parse");
+    }
+    expect(filtered.data).toMatchObject({
+      type: "directory_suggestions_request",
+      query: "src/co",
+      cwd: "/tmp/workspace",
+      includeFiles: false,
+      includeDirectories: true,
+      matchMode: "fuzzy",
+      limit: 30,
+      requestId: "req-dir-filters",
+    });
+  });
+
   it("rejects websocket envelope for removed agent_stream_snapshot message type", () => {
     const fixture = {
       type: "agent_stream_snapshot",

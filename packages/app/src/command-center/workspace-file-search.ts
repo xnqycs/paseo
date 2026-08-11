@@ -7,14 +7,7 @@ import { useWorkspaceDirectory } from "@/stores/session-store-hooks";
 import { useWorkspaceLayoutStore } from "@/stores/workspace-layout-store";
 import { clearCommandCenterFocusRestoreElement } from "@/utils/command-center-focus-restore";
 import { buildWorkspaceTabPersistenceKey } from "@/workspace-tabs/model";
-import {
-  describeWorkspaceFilePath,
-  type WorkspaceFileSearchEntry,
-} from "./workspace-file-search-model";
-
-interface DirectorySuggestionEntry {
-  path: string;
-}
+import { describeFileEntries, type WorkspaceFileSearchEntry } from "./workspace-file-search-model";
 
 const FILE_SEARCH_DEBOUNCE_MS = 100;
 const FILE_SEARCH_LIMIT = 100;
@@ -39,12 +32,6 @@ function errorMessage(error: unknown): string {
   if (!(error instanceof Error)) return String(error);
   if (error.name !== "DaemonRpcError") return error.message;
   return error.message.replace(/ requestType=\S+(?: code=\S+)?$/, "");
-}
-
-function describeFileEntries(
-  entries: readonly DirectorySuggestionEntry[],
-): WorkspaceFileSearchEntry[] {
-  return entries.map(({ path }) => describeWorkspaceFilePath(path));
 }
 
 export function useWorkspaceFileSearch(input: { enabled: boolean; query: string }): {

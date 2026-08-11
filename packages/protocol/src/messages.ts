@@ -4941,8 +4941,7 @@ export const DirectorySuggestionsResponseSchema = z.object({
           kind: z.enum(["file", "directory"]),
         }),
       )
-      .optional()
-      .default([]),
+      .optional(),
     error: z.string().nullable(),
     requestId: z.string(),
   }),

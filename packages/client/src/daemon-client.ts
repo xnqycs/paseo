@@ -59,7 +59,6 @@ import type {
   ForgeSearchRequest,
   GitHubSearchResponse,
   GitHubSearchRequest,
-  DirectorySuggestionsResponse,
   PaseoWorktreeListResponse,
   PaseoWorktreeArchiveResponse,
   ProjectIconSource,
@@ -139,6 +138,10 @@ import {
   normalizeProviderSnapshotUpdateMessage,
   normalizeProvidersSnapshotPayload,
 } from "./compat/normalize-provider-models.js";
+import {
+  normalizeDirectorySuggestionsPayload,
+  type DirectorySuggestionsPayload,
+} from "./compat/normalize-directory-suggestions.js";
 import { TerminalStreamRouter, type TerminalStreamEvent } from "./terminal-stream-router.js";
 import type {
   BrowserAutomationExecuteRequest,
@@ -406,7 +409,6 @@ type ValidateBranchPayload = ValidateBranchResponse["payload"];
 type BranchSuggestionsPayload = BranchSuggestionsResponse["payload"];
 type ForgeSearchPayload = ForgeSearchResponse["payload"];
 type GitHubSearchPayload = GitHubSearchResponse["payload"];
-type DirectorySuggestionsPayload = DirectorySuggestionsResponse["payload"];
 type PaseoWorktreeListPayload = PaseoWorktreeListResponse["payload"];
 type PaseoWorktreeArchivePayload = PaseoWorktreeArchiveResponse["payload"];
 type CreatePaseoWorktreePayload = Extract<
@@ -4127,7 +4129,7 @@ export class DaemonClient {
     },
     requestId?: string,
   ): Promise<DirectorySuggestionsPayload> {
-    return this.sendCorrelatedSessionRequest({
+    const payload = await this.sendCorrelatedSessionRequest({
       requestId,
       message: {
         type: "directory_suggestions_request",
@@ -4142,6 +4144,7 @@ export class DaemonClient {
       // Home-tree scans on large home dirs can take several seconds; don't cut
       // the suggestion request off early (it would surface as an empty list).
     });
+    return normalizeDirectorySuggestionsPayload(payload);
   }
 
   // ============================================================================

@@ -95,26 +95,19 @@ function normalizeDraftCommandConfig(
 }
 
 function mapDirectorySuggestionsToEntries(payload: {
-  entries?: Array<{ path: string; kind: string }>;
-  directories?: string[];
+  entries: Array<{ path: string; kind: string }>;
 }): DirectorySuggestionEntry[] {
-  if (Array.isArray(payload.entries) && payload.entries.length > 0) {
-    return payload.entries.flatMap((entry) => {
-      if (
-        !entry ||
-        typeof entry.path !== "string" ||
-        (entry.kind !== "file" && entry.kind !== "directory")
-      ) {
-        return [];
-      }
-      return [{ path: entry.path, kind: entry.kind }];
-    });
-  }
-
-  return (payload.directories ?? []).map((path) => ({
-    path,
-    kind: "directory" as const,
-  }));
+  // Daemon client normalizes legacy `directories`-only responses before return.
+  return payload.entries.flatMap((entry) => {
+    if (
+      !entry ||
+      typeof entry.path !== "string" ||
+      (entry.kind !== "file" && entry.kind !== "directory")
+    ) {
+      return [];
+    }
+    return [{ path: entry.path, kind: entry.kind }];
+  });
 }
 
 function mapCommandToOption(entry: AvailableCommand, t: TFunction): AgentAutocompleteOption {

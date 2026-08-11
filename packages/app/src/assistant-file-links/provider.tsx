@@ -61,6 +61,7 @@ export function AssistantFileLinkResolverProvider({
     }
 
     const result = await activeClient.getDirectorySuggestions(input);
+    // `entries` is always present after client-side legacy normalization.
     return { entries: result.entries, error: result.error };
   }, []);
 
