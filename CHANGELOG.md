@@ -1,5 +1,41 @@
 # Changelog
 
+## 0.3.2 - 2026-08-12
+
+### Added
+
+- Find and open project directories by name, or complete a path one segment at a time with fuzzy sibling matching
+- Save reusable agent profiles for provider, model, mode, reasoning, and feature choices
+- Search workspace files from the Command Center and open them directly
+- Render Mermaid diagrams in chat and Markdown previews with pan and zoom controls
+- Manage files from context menus with copy, rename, move, delete, restore, and tree actions
+- Group the sidebar by project or status from the Command Center
+- Rename workspaces and inspect provider diagnostics from the CLI
+- Choose the model used for workspace metadata generation
+- See live native task progress from Claude, Codex, and OpenCode agents
+- Use the published TypeScript SDK and expanded integration guides
+- Deploy multi-file Hub workflow bundles with file-specific validation errors
+
+### Improved
+
+- Large diffs open and scroll more quickly on a single surface
+- Markdown previews present front matter, tables, and links more clearly
+- New worktrees are always fresh and inherit the source project's settings
+- File observation is more reliable and efficient with the custom watcher
+- Dictation recordings survive WebSocket interruptions
+- Native apps display SVG project icons with an ICO fallback
+- Composer controls include clearer tooltips
+
+### Fixed
+
+- Add Project path completion fuzzy-matches sibling directories such as `/docker_data` from `/docker`, then lists the selected directory's direct children
+- Daemon workers remain available after the host wakes from sleep
+- Android avoids unsupported array sorting and bounds provider snapshot storage
+- Large OMP model catalogs no longer overflow the provider connection
+- Codex compaction completes cleanly when a turn ends
+- Agent notifications remain active through permission prompts and stop after a host is removed
+- Theme selection remains consistent across app reloads and system appearance changes
+
 ## 0.3.1 - 2026-08-09
 
 ### Added
