@@ -7,6 +7,8 @@ const repoRoot = new URL("../", import.meta.url);
 const ciWorkflowPath = new URL(".github/workflows/ci.yml", repoRoot);
 const dockerWorkflowPath = new URL(".github/workflows/docker.yml", repoRoot);
 const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
+const nixUpdateHashWorkflowPath = new URL(".github/workflows/nix-update-hash.yml", repoRoot);
+const deployWebsiteWorkflowPath = new URL(".github/workflows/deploy-website.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
 const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoRoot);
 const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
@@ -256,5 +258,18 @@ test("non-required Docker and Nix workflows avoid runners with workflow path fil
     const trigger = source.split("jobs:", 1)[0];
     assert.match(trigger, /^\s+paths:\s*$/m);
     assert.doesNotMatch(source, /dorny\/paths-filter/);
+  }
+});
+
+test("official deployment jobs do not run in forks without upstream secrets", () => {
+  const workflows = [
+    [nixUpdateHashWorkflowPath, "update-hash"],
+    [deployWebsiteWorkflowPath, "deploy"],
+  ];
+
+  for (const [workflowPath, jobId] of workflows) {
+    const jobs = jobBlocks(readFileSync(workflowPath, "utf8"));
+    const job = jobs.get(jobId)?.join("\n") ?? "";
+    assert.match(job, /github\.repository == 'getpaseo\/paseo'/, workflowPath.pathname);
   }
 });
