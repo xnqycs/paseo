@@ -6,6 +6,7 @@ import {
   moveAddProjectActiveIndex,
   moveAddProjectSelection,
   openAddProjectFlow,
+  openDirectoryFuzzySearchPage,
   openDirectorySearchPage,
   openGithubLocationPage,
   openNewDirectoryNamePage,
@@ -53,6 +54,20 @@ describe("Add Project navigation", () => {
 
     expect(currentAddProjectPage(state)).toEqual({
       kind: "directory-search",
+      hostId: "host-1",
+      query: "",
+      activeIndex: 0,
+      error: null,
+      isSubmitting: false,
+    });
+  });
+
+  it("opens the independent directory-fuzzy-search page", () => {
+    let state = openAddProjectFlow({ hosts: [HOST] });
+    state = openDirectoryFuzzySearchPage(state, HOST.serverId);
+
+    expect(currentAddProjectPage(state)).toEqual({
+      kind: "directory-fuzzy-search",
       hostId: "host-1",
       query: "",
       activeIndex: 0,
@@ -172,8 +187,13 @@ describe("Add Project options", () => {
     ).toEqual([
       {
         id: "directory-search",
-        label: "Search for directory",
-        description: "Find a directory on Local",
+        label: "Open directory",
+        description: "Enter a path and browse its contents on Local",
+      },
+      {
+        id: "directory-fuzzy-search",
+        label: "Search directories",
+        description: "Find a directory by name on Local",
       },
       {
         id: "github",

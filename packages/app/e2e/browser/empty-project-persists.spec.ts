@@ -85,7 +85,7 @@ test.describe("Project picker search", () => {
     await gotoAppShell(page);
     await waitForSidebarProjectListReady(page);
     await openAddProjectFlow(page);
-    await chooseAddProjectMethod(page, "directory-search");
+    await chooseAddProjectMethod(page, "directory-fuzzy-search");
 
     const input = addProjectFlowInput(page);
     await input.fill(projectPickerFixture.fuzzyQuery);

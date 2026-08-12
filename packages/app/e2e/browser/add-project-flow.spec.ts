@@ -76,6 +76,10 @@ test.describe("Add Project command-center flow", () => {
     await openAddProjectFlow(page);
 
     await expect(addProjectFlowMethod(page, "directory-search")).toBeVisible();
+    await expect(addProjectFlowMethod(page, "directory-search")).toContainText("Open directory");
+    await expect(addProjectFlowMethod(page, "directory-fuzzy-search")).toContainText(
+      "Search directories",
+    );
     await expect(addProjectFlowInput(page)).toHaveCount(0);
     await expect(addProjectFlow(page).getByRole("textbox")).toHaveCount(0);
     await expect(page.getByTestId("add-project-flow-page-host")).toHaveCount(0);
@@ -251,7 +255,7 @@ test.describe("Add Project command-center flow", () => {
     });
   });
 
-  test("keyboard directory search adds the selected Project", async ({
+  test("keyboard exact directory path adds the selected Project", async ({
     page,
     projectPickerFixture,
   }) => {
@@ -260,6 +264,29 @@ test.describe("Add Project command-center flow", () => {
 
     await page.keyboard.press("Enter");
     await expectAddProjectPage(page, "directory-search");
+    await addProjectFlowInput(page).fill(projectPickerFixture.projectPath);
+    await expect(
+      page.getByTestId(
+        `add-project-flow-path-${encodeURIComponent(projectPickerFixture.projectPath)}`,
+      ),
+    ).toBeVisible({ timeout: 30_000 });
+    await page.keyboard.press("Enter");
+
+    const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
+    projectPickerFixture.rememberProjectId(projectId);
+    await expectNewWorkspaceForAddedProject(page, {
+      serverId: getServerId(),
+      projectId,
+      projectName: projectPickerFixture.projectName,
+      projectPath: projectPickerFixture.projectPath,
+    });
+    await expectProjectHasNoWorkspaces(projectId);
+  });
+
+  test("fuzzy directory search is a separate method", async ({ page, projectPickerFixture }) => {
+    await gotoAppShell(page);
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-fuzzy-search");
     await page.keyboard.type(projectPickerFixture.fuzzyQuery);
     await expect(addProjectFlow(page)).toContainText(projectPickerFixture.projectName, {
       timeout: 30_000,
@@ -277,37 +304,42 @@ test.describe("Add Project command-center flow", () => {
     await expectProjectHasNoWorkspaces(projectId);
   });
 
-  test("single-segment POSIX input searches by directory name before opening a literal path", async ({
+  test("path input lists only the selected directory and its direct children", async ({
     page,
     projectPickerFixture,
   }) => {
     const gate = await installDaemonWebSocketGate(page);
-    gate.holdNextServerMessage("directory_suggestions_response");
+    const parentDirectory = path.dirname(projectPickerFixture.projectPath);
+    const matchedDirectory = path.join(parentDirectory, "docker_data");
+    const partialPath = path.join(parentDirectory, "docker");
+    const childDirectory = path.join(matchedDirectory, "direct-child");
+    const nestedDirectory = path.join(childDirectory, "nested");
+    await mkdir(nestedDirectory, { recursive: true });
     await gotoAppShell(page);
     await openAddProjectFlow(page);
     await chooseAddProjectMethod(page, "directory-search");
 
-    await addProjectFlowInput(page).fill(`/${projectPickerFixture.projectName}`);
-    await gate.waitForHeldServerMessage("directory_suggestions_response");
-    await expect(page.getByTestId("add-project-flow-loading")).toBeVisible();
-    await page.keyboard.press("Enter");
-    expect(gate.getClientRequestCount("project.add.request")).toBe(0);
-    gate.releaseHeldServerMessage("directory_suggestions_response");
+    await addProjectFlowInput(page).fill(partialPath);
+    await expect(
+      page.getByTestId(`add-project-flow-path-${encodeURIComponent(matchedDirectory)}`),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.getByTestId(`add-project-flow-path-${encodeURIComponent(partialPath)}`),
+    ).toHaveCount(0);
+    await expect(
+      page.getByTestId(`add-project-flow-path-${encodeURIComponent(childDirectory)}`),
+    ).toHaveCount(0);
 
-    const matchedPath = page.getByTestId(
-      `add-project-flow-path-${encodeURIComponent(projectPickerFixture.projectPath)}`,
-    );
-    await expect(matchedPath).toBeVisible({ timeout: 30_000 });
-    await page.keyboard.press("Enter");
+    await addProjectFlowInput(page).fill(matchedDirectory);
+    await expect(
+      page.getByTestId(`add-project-flow-path-${encodeURIComponent(childDirectory)}`),
+    ).toBeVisible({ timeout: 30_000 });
+    await expect(
+      page.getByTestId(`add-project-flow-path-${encodeURIComponent(nestedDirectory)}`),
+    ).toHaveCount(0);
+    expect(gate.getClientRequestCount("directory_suggestions_request")).toBe(0);
 
-    const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
-    projectPickerFixture.rememberProjectId(projectId);
-    await expectNewWorkspaceForAddedProject(page, {
-      serverId: getServerId(),
-      projectId,
-      projectName: projectPickerFixture.projectName,
-      projectPath: projectPickerFixture.projectPath,
-    });
+    await rm(matchedDirectory, { recursive: true, force: true });
   });
 
   test("legacy directory suggestions without entries still render and open", async ({
@@ -317,7 +349,7 @@ test.describe("Add Project command-center flow", () => {
     await rewriteDirectorySuggestionsToLegacy(page);
     await gotoAppShell(page);
     await openAddProjectFlow(page);
-    await chooseAddProjectMethod(page, "directory-search");
+    await chooseAddProjectMethod(page, "directory-fuzzy-search");
 
     await addProjectFlowInput(page).fill(projectPickerFixture.fuzzyQuery);
     const pathRow = page.getByTestId(
@@ -347,13 +379,13 @@ test.describe("Add Project command-center flow", () => {
     const gate = await failNextDirectorySuggestionWithBusinessError(page, searchError);
     await gotoAppShell(page);
     await openAddProjectFlow(page);
-    await chooseAddProjectMethod(page, "directory-search");
+    await chooseAddProjectMethod(page, "directory-fuzzy-search");
 
     await addProjectFlowInput(page).fill("will-fail-once");
     const queryError = page.getByTestId("add-project-flow-query-error");
     await expect(queryError).toBeVisible({ timeout: 30_000 });
     await expect(queryError).toHaveText(searchError);
-    await expectAddProjectPage(page, "directory-search");
+    await expectAddProjectPage(page, "directory-fuzzy-search");
     await expect(addProjectFlowInput(page)).toHaveValue("will-fail-once");
     await expect(addProjectFlowInput(page)).toBeEditable();
     expect(gate.injectedCount()).toBe(1);
@@ -414,7 +446,7 @@ test.describe("Add Project command-center flow", () => {
 
     await gotoAppShell(page);
     await openAddProjectFlow(page);
-    await chooseAddProjectMethod(page, "directory-search");
+    await chooseAddProjectMethod(page, "directory-fuzzy-search");
 
     await addProjectFlowInput(page).fill(emptyQuery);
     await hold.waitForHeld();
@@ -600,7 +632,7 @@ test.describe("Add Project command-center flow", () => {
       await openAddProjectHostSelection(page);
       await addProjectFlowHost(page, disconnectHostId).click();
       await expectAddProjectPage(page, "method");
-      await chooseAddProjectMethod(page, "directory-search");
+      await chooseAddProjectMethod(page, "directory-fuzzy-search");
 
       await addProjectFlowInput(page).fill(searchableName);
       await expect(addProjectFlow(page)).toContainText(searchableName, { timeout: 30_000 });
@@ -617,12 +649,12 @@ test.describe("Add Project command-center flow", () => {
 
       const queryError = page.getByTestId("add-project-flow-query-error");
       await expect(queryError).toBeVisible({ timeout: 30_000 });
-      await expectAddProjectPage(page, "directory-search");
+      await expectAddProjectPage(page, "directory-fuzzy-search");
       await expect(addProjectFlowInput(page)).toHaveValue(offlineQuery);
       await expect(addProjectFlowInput(page)).toBeEditable();
 
       // Restart the same isolated daemon on the same port; host registry stays valid.
-      // Stay on the directory-search page — recovery is a new query after reconnect.
+      // Stay on the fuzzy-search page — recovery is a new query after reconnect.
       await secondary.restart();
       await secondaryGate.waitForServerInfo(disconnectHostId, serverInfoCountBeforeRestart + 1);
       await secondaryGate.waitForClientRequest(
@@ -640,7 +672,7 @@ test.describe("Add Project command-center flow", () => {
       await expect(resultRow).toBeVisible({ timeout: 30_000 });
       expect(secondaryGate.getDirectorySuggestionsRequestCount(recoveryName)).toBe(1);
       await expect(queryError).toHaveCount(0);
-      await expectAddProjectPage(page, "directory-search");
+      await expectAddProjectPage(page, "directory-fuzzy-search");
       await expect(addProjectFlowInput(page)).toHaveValue(recoveryName);
       await expect(addProjectFlowInput(page)).toBeEditable();
     } finally {

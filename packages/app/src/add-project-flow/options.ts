@@ -6,7 +6,12 @@ import {
 import { shortenPath } from "@/utils/shorten-path";
 import type { AddProjectHost, GithubRepositoryChoice } from "./model";
 
-export type AddProjectMethodId = "directory-search" | "browse" | "github" | "new-directory";
+export type AddProjectMethodId =
+  | "directory-search"
+  | "directory-fuzzy-search"
+  | "browse"
+  | "github"
+  | "new-directory";
 
 export interface AddProjectMethodOption {
   id: AddProjectMethodId;
@@ -38,8 +43,13 @@ export function buildAddProjectMethods(host: AddProjectHost): AddProjectMethodOp
   const options: AddProjectMethodOption[] = [];
   options.push({
     id: "directory-search",
-    label: "Search for directory",
-    description: `Find a directory on ${host.label}`,
+    label: "Open directory",
+    description: `Enter a path and browse its contents on ${host.label}`,
+  });
+  options.push({
+    id: "directory-fuzzy-search",
+    label: "Search directories",
+    description: `Find a directory by name on ${host.label}`,
   });
   if (host.canBrowse) {
     options.push({

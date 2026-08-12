@@ -5,15 +5,22 @@ export type AddProjectFlowPage =
   | "host"
   | "method"
   | "directory-search"
+  | "directory-fuzzy-search"
   | "github-search"
   | "github-location"
   | "new-directory-parent"
   | "new-directory-name";
 
-export type AddProjectMethod = "directory-search" | "browse" | "github" | "new-directory";
+export type AddProjectMethod =
+  | "directory-search"
+  | "directory-fuzzy-search"
+  | "browse"
+  | "github"
+  | "new-directory";
 
 const METHOD_DESTINATIONS: Record<Exclude<AddProjectMethod, "browse">, AddProjectFlowPage> = {
   "directory-search": "directory-search",
+  "directory-fuzzy-search": "directory-fuzzy-search",
   github: "github-search",
   "new-directory": "new-directory-parent",
 };

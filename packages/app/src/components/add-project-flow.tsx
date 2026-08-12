@@ -37,6 +37,7 @@ import {
   currentAddProjectPage,
   moveAddProjectSelection,
   openAddProjectFlow,
+  openDirectoryFuzzySearchPage,
   openDirectorySearchPage,
   openGithubLocationPage,
   openGithubSearchPage,
@@ -63,8 +64,11 @@ import {
   type AddProjectMethodId,
 } from "@/add-project-flow/options";
 import {
+  buildDirectoryBrowseOptions,
   buildProjectPickerOptions,
-  getProjectPickerDirectorySearchQuery,
+  getDirectoryBrowseTarget,
+  isOpenableProjectPath,
+  resolveDirectoryBrowseEntries,
   shouldFetchAddProjectDirectories,
   type ProjectPickerOption,
 } from "@/components/project-picker-options";
@@ -138,7 +142,7 @@ const EMPTY_PATHS: string[] = [];
 const NAVIGATION_HINT_KEYS = ["Up", "Down"];
 const SELECT_HINT_KEYS = ["Enter"];
 const ESCAPE_HINT_KEYS = ["Esc"];
-/** Debounce window before a directory-search query is sent to the selected host. */
+/** Debounce window before a directory query is sent to the selected host. */
 const DIRECTORY_SEARCH_DEBOUNCE_MS = 250;
 /** Default result cap for Add Project directory queries. */
 const DIRECTORY_SEARCH_LIMIT = 30;
@@ -167,6 +171,7 @@ function methodIcon(method: AddProjectMethodId): FlowRowOption["icon"] {
   if (method === "github") return Github;
   if (method === "browse") return FolderOpen;
   if (method === "new-directory") return FolderPlus;
+  if (method === "directory-search") return Folder;
   return Search;
 }
 
@@ -186,6 +191,7 @@ function emptyText(page: AddProjectPage, host: AddProjectHost | null): string {
   if (page.kind === "host") return "No connected hosts";
   if (page.kind === "github-search") return "Enter a GitHub URL or owner/repo";
   if (page.kind === "method") return addProjectMethodEmptyText(host);
+  if (page.kind === "directory-search") return "Enter a directory path";
   return "No matching options";
 }
 
@@ -193,6 +199,7 @@ interface QueryErrorInput {
   searchesDirectories: boolean;
   directoryFailed: boolean;
   directoryError: string | null;
+  directoryFallback?: string;
   githubFailed: boolean;
   githubAvailable: boolean | null;
   githubError: string | null;
@@ -200,7 +207,9 @@ interface QueryErrorInput {
 
 function queryErrorText(input: QueryErrorInput): string | null {
   if (input.searchesDirectories && input.directoryFailed) {
-    return input.directoryError?.trim() || "Unable to search directories";
+    return (
+      input.directoryError?.trim() || input.directoryFallback || "Unable to search directories"
+    );
   }
   if (input.githubFailed) return "Unable to search GitHub repositories";
   if (input.githubError) return input.githubError;
@@ -219,7 +228,9 @@ function pageTitle(page: AddProjectPage): string {
     case "method":
       return "Add project";
     case "directory-search":
-      return "Search for directory";
+      return "Open directory";
+    case "directory-fuzzy-search":
+      return "Search directories";
     case "github-search":
       return "Clone from GitHub";
     case "github-location":
@@ -238,7 +249,9 @@ function pagePlaceholder(page: AddProjectInputPage): string {
     case "host":
       return "Search hosts...";
     case "directory-search":
-      return "Search directories or enter a path...";
+      return "Enter a directory path...";
+    case "directory-fuzzy-search":
+      return "Search by directory name...";
     case "github-search":
       return "Search or enter a GitHub repository...";
     case "github-location":
@@ -403,16 +416,16 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   }, [page.kind]);
 
   const searchesDirectories =
-    page.kind === "directory-search" ||
+    page.kind === "directory-fuzzy-search" ||
     page.kind === "github-location" ||
     page.kind === "new-directory-parent";
-  const directorySearchQuery =
-    page.kind === "directory-search"
-      ? getProjectPickerDirectorySearchQuery(debouncedQuery)
-      : debouncedQuery;
-  const currentDirectorySearchQuery =
-    page.kind === "directory-search" ? getProjectPickerDirectorySearchQuery(query) : query;
-  // Directory pages with a non-blank query want results even when the host client
+  const directorySearchQuery = debouncedQuery;
+  const currentDirectorySearchQuery = query;
+  const directoryBrowseTarget = useMemo(
+    () => getDirectoryBrowseTarget(debouncedQuery),
+    [debouncedQuery],
+  );
+  // Fuzzy directory pages with a non-blank query want results even when the host client
   // is temporarily gone (disconnect). Keep that signal separate from `enabled` so
   // a failed query still renders a recoverable error after the socket drops.
   const wantsDirectoryResults =
@@ -442,6 +455,42 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       };
     },
     enabled: shouldFetchDirectories,
+    dataShape: "value",
+    retry: false,
+    staleTimeMs: 15_000,
+  });
+  const directoryBrowseQuery = useFetchQuery({
+    queryKey: ["add-project-flow-directory-browse", hostId, directoryBrowseTarget],
+    queryFn: async () => {
+      if (!client || !directoryBrowseTarget) {
+        return { query: debouncedQuery, pathExists: false, paths: [] as string[] };
+      }
+      const directory = await client.listDirectory(directoryBrowseTarget.parentPath, ".");
+      const resolution = resolveDirectoryBrowseEntries({
+        target: directoryBrowseTarget,
+        directoryNames: directory.entries
+          .filter((entry) => entry.kind === "directory")
+          .map((entry) => entry.name),
+        limit: DIRECTORY_SEARCH_LIMIT,
+      });
+      if (!resolution.exactPath || resolution.exactPath === directoryBrowseTarget.parentPath) {
+        return {
+          query: debouncedQuery,
+          pathExists: resolution.exactPath !== null,
+          paths: resolution.matchingPaths,
+        };
+      }
+
+      const exactDirectory = await client.listDirectory(resolution.exactPath, ".");
+      return {
+        query: debouncedQuery,
+        pathExists: true,
+        paths: exactDirectory.entries
+          .filter((entry) => entry.kind === "directory")
+          .map((entry) => joinDirectoryPath(resolution.exactPath!, entry.name)),
+      };
+    },
+    enabled: Boolean(client && page.kind === "directory-search" && directoryBrowseTarget),
     dataShape: "value",
     retry: false,
     staleTimeMs: 15_000,
@@ -484,7 +533,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   );
 
   const openAddedProject = useCallback(
-    async (path: string, sourceKind: "directory-search" | "method") => {
+    async (path: string, sourceKind: "directory-search" | "directory-fuzzy-search" | "method") => {
       if (!hostId || submissionInFlightRef.current) return;
       submissionInFlightRef.current = true;
       setState((current) =>
@@ -536,6 +585,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       if (!hostId) return;
       if (method === "directory-search") {
         setState((current) => openDirectorySearchPage(current, hostId));
+      } else if (method === "directory-fuzzy-search") {
+        setState((current) => openDirectoryFuzzySearchPage(current, hostId));
       } else if (method === "browse") {
         void browse();
       } else if (method === "github") {
@@ -554,19 +605,30 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
         : EMPTY_PATHS,
     [currentDirectorySearchQuery, directoryQuery.data],
   );
-  const ambiguousDirectorySearchPending =
-    page.kind === "directory-search" &&
-    currentDirectorySearchQuery !== query.trim() &&
-    (query !== debouncedQuery || directoryQuery.isFetching);
+  const directoryBrowsePaths = useMemo(
+    () =>
+      directoryBrowseQuery.data?.query === query ? directoryBrowseQuery.data.paths : EMPTY_PATHS,
+    [directoryBrowseQuery.data, query],
+  );
+  const directoryBrowsePathExists =
+    directoryBrowseQuery.data?.query === query && directoryBrowseQuery.data.pathExists;
+  const directoryBrowseOptions = useMemo(
+    () =>
+      buildDirectoryBrowseOptions({
+        path: query,
+        pathExists: directoryBrowsePathExists,
+        childPaths: directoryBrowsePaths,
+      }),
+    [directoryBrowsePathExists, directoryBrowsePaths, query],
+  );
   const pathOptions = useMemo(
     () =>
       buildProjectPickerOptions({
         recommendedPaths,
         serverPaths: directoryPaths,
         query,
-        searchQuery: currentDirectorySearchQuery,
       }),
-    [currentDirectorySearchQuery, directoryPaths, query, recommendedPaths],
+    [directoryPaths, query, recommendedPaths],
   );
   const cloneRepository = useCallback(
     async (locationPage: GithubLocationPage, parentPath: string) => {
@@ -645,7 +707,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       }));
     }
     if (page.kind === "directory-search") {
-      return pathOptions.map((option) => {
+      return directoryBrowseOptions.map((option) => {
         const shortPath = shortenPath(option.path);
         return {
           id: option.path,
@@ -654,6 +716,19 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
           icon: Folder,
           testID: pathTestId(option.path),
           select: () => void openAddedProject(option.path, "directory-search"),
+        };
+      });
+    }
+    if (page.kind === "directory-fuzzy-search") {
+      return pathOptions.map((option) => {
+        const shortPath = shortenPath(option.path);
+        return {
+          id: option.path,
+          title: shortPath,
+          subtitle: directoryOptionSubtitle(option, shortPath),
+          icon: Folder,
+          testID: pathTestId(option.path),
+          select: () => void openAddedProject(option.path, "directory-fuzzy-search"),
         };
       });
     }
@@ -723,6 +798,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   }, [
     cloneRepository,
     directoryPaths,
+    directoryBrowseOptions,
     githubQuery.data,
     host,
     onClose,
@@ -787,10 +863,20 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       void createDirectory();
       return;
     }
-    if (ambiguousDirectorySearchPending) return;
     const option = rows[activeIndex];
-    if (option && !option.disabled) option.select();
-  }, [activeIndex, ambiguousDirectorySearchPending, createDirectory, page.kind, rows]);
+    if (option && !option.disabled) {
+      option.select();
+      return;
+    }
+    // Directory browse keeps the typed absolute path usable while its parent
+    // listing is still loading, and when no fuzzy sibling matches exist.
+    if (page.kind === "directory-search") {
+      const typedPath = query.trim();
+      if (isOpenableProjectPath(typedPath)) {
+        void openAddedProject(typedPath, "directory-search");
+      }
+    }
+  }, [activeIndex, createDirectory, openAddedProject, page.kind, query, rows]);
 
   const handleKey = useCallback(
     (key: string): boolean => {
@@ -851,14 +937,29 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       ? githubQuery.data.payload
       : null;
   const loading =
+    (page.kind === "directory-search" &&
+      (query !== debouncedQuery || directoryBrowseQuery.isFetching)) ||
     (searchesDirectories && (query !== debouncedQuery || directoryQuery.isFetching)) ||
     (page.kind === "github-search" &&
       host?.canSearchGithubRepositories === true &&
       (query !== debouncedQuery || githubQuery.isFetching));
+  let directoryFailed = false;
+  let directoryError: string | null = null;
+  if (page.kind === "directory-search") {
+    directoryFailed = directoryBrowseQuery.isError;
+    directoryError =
+      directoryBrowseQuery.error instanceof Error ? directoryBrowseQuery.error.message : null;
+  } else if (searchesDirectories) {
+    directoryFailed = directoryQuery.isError;
+    directoryError = directoryQuery.error instanceof Error ? directoryQuery.error.message : null;
+  }
   const queryError = queryErrorText({
-    searchesDirectories: wantsDirectoryResults,
-    directoryFailed: directoryQuery.isError,
-    directoryError: directoryQuery.error instanceof Error ? directoryQuery.error.message : null,
+    searchesDirectories:
+      wantsDirectoryResults ||
+      (page.kind === "directory-search" && getDirectoryBrowseTarget(query) !== null),
+    directoryFailed,
+    directoryError,
+    directoryFallback: page.kind === "directory-search" ? "Unable to open directory" : undefined,
     githubFailed: page.kind === "github-search" && githubQuery.isError,
     githubAvailable: currentGithubSearch?.available ?? null,
     githubError: currentGithubSearch?.error ?? null,
@@ -961,8 +1062,8 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
               </Text>
             ) : null}
             {!isSubmitting &&
-            (!loading || page.kind === "github-search") &&
-            (!queryError || page.kind === "github-search")
+            (!loading || page.kind === "github-search" || page.kind === "directory-search") &&
+            (!queryError || page.kind === "github-search" || page.kind === "directory-search")
               ? rows.map((option, index) => (
                   <FlowRow key={option.id} option={option} active={index === activeIndex} />
                 ))
