@@ -64,6 +64,7 @@ import {
 } from "@/add-project-flow/options";
 import {
   buildProjectPickerOptions,
+  getProjectPickerDirectorySearchQuery,
   shouldFetchAddProjectDirectories,
   type ProjectPickerOption,
 } from "@/components/project-picker-options";
@@ -405,18 +406,24 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
     page.kind === "directory-search" ||
     page.kind === "github-location" ||
     page.kind === "new-directory-parent";
+  const directorySearchQuery =
+    page.kind === "directory-search"
+      ? getProjectPickerDirectorySearchQuery(debouncedQuery)
+      : debouncedQuery;
+  const currentDirectorySearchQuery =
+    page.kind === "directory-search" ? getProjectPickerDirectorySearchQuery(query) : query;
   // Directory pages with a non-blank query want results even when the host client
   // is temporarily gone (disconnect). Keep that signal separate from `enabled` so
   // a failed query still renders a recoverable error after the socket drops.
   const wantsDirectoryResults =
-    searchesDirectories && shouldFetchAddProjectDirectories(debouncedQuery);
+    searchesDirectories && shouldFetchAddProjectDirectories(directorySearchQuery);
   const shouldFetchDirectories = Boolean(client) && wantsDirectoryResults;
   const directoryQuery = useFetchQuery({
-    queryKey: ["add-project-flow-directories", hostId, debouncedQuery],
+    queryKey: ["add-project-flow-directories", hostId, directorySearchQuery],
     queryFn: async () => {
-      if (!client) return { query: debouncedQuery, paths: [] as string[] };
+      if (!client) return { query: directorySearchQuery, paths: [] as string[] };
       const payload = await client.getDirectorySuggestions({
-        query: debouncedQuery,
+        query: directorySearchQuery,
         includeDirectories: true,
         includeFiles: false,
         limit: DIRECTORY_SEARCH_LIMIT,
@@ -428,7 +435,7 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       // Client already normalizes legacy `directories`-only responses into typed entries.
       // Keep daemon order; only drop non-directory kinds for this picker.
       return {
-        query: debouncedQuery,
+        query: directorySearchQuery,
         paths: payload.entries
           .filter((entry) => entry.kind === "directory")
           .map((entry) => entry.path),
@@ -541,17 +548,25 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
   );
 
   const directoryPaths = useMemo(
-    () => (directoryQuery.data?.query === query ? directoryQuery.data.paths : EMPTY_PATHS),
-    [directoryQuery.data, query],
+    () =>
+      directoryQuery.data?.query === currentDirectorySearchQuery
+        ? directoryQuery.data.paths
+        : EMPTY_PATHS,
+    [currentDirectorySearchQuery, directoryQuery.data],
   );
+  const ambiguousDirectorySearchPending =
+    page.kind === "directory-search" &&
+    currentDirectorySearchQuery !== query.trim() &&
+    (query !== debouncedQuery || directoryQuery.isFetching);
   const pathOptions = useMemo(
     () =>
       buildProjectPickerOptions({
         recommendedPaths,
         serverPaths: directoryPaths,
         query,
+        searchQuery: currentDirectorySearchQuery,
       }),
-    [directoryPaths, query, recommendedPaths],
+    [currentDirectorySearchQuery, directoryPaths, query, recommendedPaths],
   );
   const cloneRepository = useCallback(
     async (locationPage: GithubLocationPage, parentPath: string) => {
@@ -772,9 +787,10 @@ export function AddProjectFlow({ request, onClose }: AddProjectFlowProps) {
       void createDirectory();
       return;
     }
+    if (ambiguousDirectorySearchPending) return;
     const option = rows[activeIndex];
     if (option && !option.disabled) option.select();
-  }, [activeIndex, createDirectory, page.kind, rows]);
+  }, [activeIndex, ambiguousDirectorySearchPending, createDirectory, page.kind, rows]);
 
   const handleKey = useCallback(
     (key: string): boolean => {

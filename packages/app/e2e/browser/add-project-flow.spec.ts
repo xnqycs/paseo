@@ -277,6 +277,39 @@ test.describe("Add Project command-center flow", () => {
     await expectProjectHasNoWorkspaces(projectId);
   });
 
+  test("single-segment POSIX input searches by directory name before opening a literal path", async ({
+    page,
+    projectPickerFixture,
+  }) => {
+    const gate = await installDaemonWebSocketGate(page);
+    gate.holdNextServerMessage("directory_suggestions_response");
+    await gotoAppShell(page);
+    await openAddProjectFlow(page);
+    await chooseAddProjectMethod(page, "directory-search");
+
+    await addProjectFlowInput(page).fill(`/${projectPickerFixture.projectName}`);
+    await gate.waitForHeldServerMessage("directory_suggestions_response");
+    await expect(page.getByTestId("add-project-flow-loading")).toBeVisible();
+    await page.keyboard.press("Enter");
+    expect(gate.getClientRequestCount("project.add.request")).toBe(0);
+    gate.releaseHeldServerMessage("directory_suggestions_response");
+
+    const matchedPath = page.getByTestId(
+      `add-project-flow-path-${encodeURIComponent(projectPickerFixture.projectPath)}`,
+    );
+    await expect(matchedPath).toBeVisible({ timeout: 30_000 });
+    await page.keyboard.press("Enter");
+
+    const projectId = await expectOpenedProject(page, projectPickerFixture.projectName);
+    projectPickerFixture.rememberProjectId(projectId);
+    await expectNewWorkspaceForAddedProject(page, {
+      serverId: getServerId(),
+      projectId,
+      projectName: projectPickerFixture.projectName,
+      projectPath: projectPickerFixture.projectPath,
+    });
+  });
+
   test("legacy directory suggestions without entries still render and open", async ({
     page,
     projectPickerFixture,

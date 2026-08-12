@@ -4,6 +4,7 @@ export interface BuildProjectPickerOptionsInput {
   recommendedPaths: string[];
   serverPaths: string[];
   query: string;
+  searchQuery?: string;
 }
 
 /**
@@ -13,6 +14,18 @@ export interface BuildProjectPickerOptionsInput {
  */
 export function shouldFetchAddProjectDirectories(query: string): boolean {
   return query.trim().length > 0;
+}
+
+/**
+ * A leading slash on a single segment is ambiguous in the Add Project search UI:
+ * mobile users commonly enter `/docker` while looking for a directory named
+ * `docker`. Search that name across the daemon home, while retaining `/docker`
+ * as a separate literal-path option.
+ */
+export function getProjectPickerDirectorySearchQuery(query: string): string {
+  const trimmedQuery = query.trim();
+  const match = /^\/([^/]+)\/?$/.exec(trimmedQuery);
+  return match?.[1] ?? trimmedQuery;
 }
 
 export interface ProjectPickerPathOption {
@@ -42,7 +55,11 @@ export function isOpenableProjectPath(query: string): boolean {
 export function buildProjectPickerOptions(
   input: BuildProjectPickerOptionsInput,
 ): ProjectPickerOption[] {
-  const suggestedPaths = buildWorkingDirectorySuggestions(input);
+  const suggestedPaths = buildWorkingDirectorySuggestions({
+    recommendedPaths: input.recommendedPaths,
+    serverPaths: input.serverPaths,
+    query: input.searchQuery ?? input.query,
+  });
   const suggestions = suggestedPaths.map<ProjectPickerSuggestionOption>((path) => ({
     kind: "suggestion",
     path,
@@ -53,5 +70,8 @@ export function buildProjectPickerOptions(
     return suggestions;
   }
 
-  return [{ kind: "path", path: trimmedQuery }, ...suggestions];
+  const literalPath = { kind: "path", path: trimmedQuery } as const;
+  return input.searchQuery && input.searchQuery !== trimmedQuery
+    ? [...suggestions, literalPath]
+    : [literalPath, ...suggestions];
 }

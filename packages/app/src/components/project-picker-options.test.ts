@@ -1,9 +1,24 @@
 import { describe, expect, it } from "vitest";
 import {
   buildProjectPickerOptions,
+  getProjectPickerDirectorySearchQuery,
   isOpenableProjectPath,
   shouldFetchAddProjectDirectories,
 } from "./project-picker-options";
+
+describe("getProjectPickerDirectorySearchQuery", () => {
+  it("searches a single-segment POSIX path as a directory name", () => {
+    expect(getProjectPickerDirectorySearchQuery("/docker")).toBe("docker");
+    expect(getProjectPickerDirectorySearchQuery("/docker/")).toBe("docker");
+  });
+
+  it("preserves directory names and unambiguous paths", () => {
+    expect(getProjectPickerDirectorySearchQuery("docker")).toBe("docker");
+    expect(getProjectPickerDirectorySearchQuery("~/docker")).toBe("~/docker");
+    expect(getProjectPickerDirectorySearchQuery("/home/ubuntu/docker")).toBe("/home/ubuntu/docker");
+    expect(getProjectPickerDirectorySearchQuery("/")).toBe("/");
+  });
+});
 
 describe("isOpenableProjectPath", () => {
   it("accepts POSIX, tilde, Windows drive-letter, and UNC paths", () => {
@@ -46,6 +61,20 @@ describe("buildProjectPickerOptions", () => {
     expect(options).toEqual([
       { kind: "path", path: "/repo" },
       { kind: "suggestion", path: "/repo/api" },
+    ]);
+  });
+
+  it("puts directory-name matches before an ambiguous literal POSIX path", () => {
+    const options = buildProjectPickerOptions({
+      recommendedPaths: [],
+      serverPaths: ["/home/ubuntu/docker"],
+      query: "/docker",
+      searchQuery: "docker",
+    });
+
+    expect(options).toEqual([
+      { kind: "suggestion", path: "/home/ubuntu/docker" },
+      { kind: "path", path: "/docker" },
     ]);
   });
 
