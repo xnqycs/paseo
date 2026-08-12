@@ -4,6 +4,7 @@ on:
   push:
     tags:
       - "v*-beta.*"
+      - "!v0.3.3-beta.1"
 
 jobs:
   build_ios:

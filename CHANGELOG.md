@@ -1,5 +1,11 @@
 # Changelog
 
+## 0.3.3-beta.1 - 2026-08-13
+
+### Added
+
+- Choose Grok reasoning effort when creating or configuring agents without changing standard ACP thinking behavior ([7cea3fc](https://github.com/xnqycs/paseo/commit/7cea3fc7bc0baae18e2c129540fe20e5c11bc5e1), [160ee3b](https://github.com/xnqycs/paseo/commit/160ee3b51e3675114264614c8cfd178454e55c3a) by [@xnqycs](https://github.com/xnqycs))
+
 ## 0.3.2 - 2026-08-12
 
 ### Added

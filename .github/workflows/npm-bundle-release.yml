@@ -1,0 +1,97 @@
+name: npm Bundle Release
+
+on:
+  push:
+    tags:
+      - "v0.3.3-beta.1"
+
+concurrency:
+  group: npm-bundle-release-${{ github.ref }}
+  cancel-in-progress: false
+
+permissions:
+  contents: write
+
+jobs:
+  publish-npm-bundle:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Resolve release version
+        shell: bash
+        run: node scripts/emit-release-env.mjs --source-tag "${{ github.ref_name }}" >> "$GITHUB_ENV"
+
+      - name: Ensure GitHub release exists
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          if gh release view "$RELEASE_TAG" --repo "${{ github.repository }}" >/dev/null 2>&1; then
+            exit 0
+          fi
+
+          release_args=(
+            release create "$RELEASE_TAG"
+            --repo "${{ github.repository }}"
+            --target "$GITHUB_SHA"
+            --title "Paseo v$RELEASE_VERSION"
+            --notes-file scripts/release-notes-0.3.3-beta.1.md
+          )
+          if [[ "$IS_PRERELEASE" == "true" ]]; then
+            release_args+=(--prerelease)
+          fi
+          if ! gh "${release_args[@]}"; then
+            echo "Release creation raced with another workflow; continuing."
+          fi
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Build and pack daemon packages
+        shell: bash
+        run: |
+          set -euo pipefail
+          bundle_dir="$RUNNER_TEMP/paseo-npm-$RELEASE_VERSION"
+          package_dir="$bundle_dir/packages"
+          mkdir -p "$package_dir"
+
+          npm run build:server
+          for package in highlight relay protocol client server cli; do
+            npm pack --workspace="@getpaseo/$package" --pack-destination "$package_dir"
+          done
+
+          cp scripts/install-npm-bundle.sh "$bundle_dir/install.sh"
+          cp scripts/install-npm-bundle.ps1 "$bundle_dir/install.ps1"
+          cp scripts/README-npm-bundle.md "$bundle_dir/README.md"
+          chmod +x "$bundle_dir/install.sh"
+
+          tar -C "$RUNNER_TEMP" -czf "$RUNNER_TEMP/paseo-npm-$RELEASE_VERSION.tar.gz" \
+            "paseo-npm-$RELEASE_VERSION"
+          (cd "$RUNNER_TEMP" && zip -qr "paseo-npm-$RELEASE_VERSION.zip" \
+            "paseo-npm-$RELEASE_VERSION")
+          (cd "$RUNNER_TEMP" && sha256sum \
+            "paseo-npm-$RELEASE_VERSION.tar.gz" \
+            "paseo-npm-$RELEASE_VERSION.zip" > "paseo-npm-$RELEASE_VERSION.sha256")
+
+      - name: Upload bundle to GitHub Release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        shell: bash
+        run: |
+          gh release upload "$RELEASE_TAG" \
+            "$RUNNER_TEMP/paseo-npm-$RELEASE_VERSION/packages/"*.tgz \
+            "$RUNNER_TEMP/paseo-npm-$RELEASE_VERSION.tar.gz" \
+            "$RUNNER_TEMP/paseo-npm-$RELEASE_VERSION.zip" \
+            "$RUNNER_TEMP/paseo-npm-$RELEASE_VERSION.sha256" \
+            --clobber \
+            --repo "${{ github.repository }}"
