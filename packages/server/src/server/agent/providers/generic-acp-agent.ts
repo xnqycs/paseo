@@ -63,6 +63,7 @@ interface GenericACPAgentClientOptions {
   thinkingOptionWriter?: (
     context: ACPProviderThinkingOptionWriterContext,
   ) => Promise<ACPProviderThinkingOptionWriteResult>;
+  now?: () => number;
 }
 
 export class GenericACPAgentClient extends ACPAgentClient {
@@ -91,6 +92,7 @@ export class GenericACPAgentClient extends ACPAgentClient {
       sessionResponseTransformer: options.sessionResponseTransformer,
       providerModelWriter: options.providerModelWriter,
       thinkingOptionWriter: options.thinkingOptionWriter,
+      now: options.now,
     });
 
     this.command = options.command;
