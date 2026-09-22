@@ -208,7 +208,7 @@ export async function startIsolatedHostDaemon(
     getPid: () => child.pid,
     stop: async () => {
       if (closed) throw new Error(`Cannot stop closed isolated daemon ${serverId}`);
-      await stopProcess(child);
+      await killProcessTree(child);
     },
     restart: async () => {
       if (closed) throw new Error(`Cannot restart closed isolated daemon ${serverId}`);
