@@ -1,5 +1,18 @@
 # Changelog
 
+## 0.9.2 - 2026-09-23
+
+This release merges upstream 0.9.1 into the fork. Every entry below from 0.4.0 through 0.9.1 is part of it.
+
+### Added
+
+- Added a Grok provider for the Grok Build CLI, with reasoning-effort choices that map to the agent's own thinking options
+
+### Changed
+
+- Split Add Project directory search into Open directory, which completes a path one segment at a time, and Search directories, which finds a directory by name
+- Changed the upstream deployment workflows to run only in the upstream repository
+
 ## 0.9.1 - 2026-09-22
 
 ### Added
