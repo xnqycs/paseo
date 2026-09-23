@@ -23,4 +23,4 @@ jobs:
         shell: bash
         run: |
           cd packages/app
-          npx eas build:list --platform android --limit 3 --non-interactive --json
+          npx --yes eas-cli@latest build:list --platform android --limit 3 --non-interactive --json
