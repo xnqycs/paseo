@@ -71,7 +71,7 @@ test("creates a worktree and registers it in the source workspace project withou
   expect(result.workspace.workspaceId).toMatch(/^wks_[0-9a-f]{16}$/);
   expect(result.workspace.projectId).toBe("remote:github.com/acme/repo");
   expect(result.workspace.displayName).toBe("feature-one");
-  expect(result.workspace.baseBranch).toBe("main");
+  expect(result.workspace.baseBranch).toBe("refs/heads/main");
   expect(result.workspace.title).toBe("Feature One");
   expect(deps.workspaceGitService.getSnapshot).not.toHaveBeenCalled();
   expect(deps.projects.get(sourceProject.projectId)).toEqual({
@@ -257,6 +257,39 @@ test("seeds an uncommitted exact-project config into the mapped worktree directo
 
   expect(readFileSync(path.join(result.workspace.cwd, "paseo.json"), "utf8")).toBe(config);
   expect(existsSync(path.join(result.worktree.worktreePath, "paseo.json"))).toBe(false);
+});
+
+test("does not overwrite a committed exact-project config with source checkout edits", async () => {
+  const { repoDir, tempDir } = createGitRepo();
+  cleanupPaths.push(tempDir);
+  const sourceDir = path.join(repoDir, "packages", "app");
+  mkdirSync(sourceDir, { recursive: true });
+  writeFileSync(path.join(sourceDir, "package.json"), "{}\n");
+  const committedConfig = JSON.stringify({ worktree: { setup: ["npm ci"] } });
+  writeFileSync(path.join(sourceDir, "paseo.json"), committedConfig);
+  commitAll(repoDir, "add subproject config");
+  writeFileSync(
+    path.join(sourceDir, "paseo.json"),
+    JSON.stringify({ worktree: { setup: ["npm install"] } }),
+  );
+
+  const result = await createPaseoWorktree(
+    {
+      cwd: sourceDir,
+      worktreeSlug: "preserve-nested-config",
+      runSetup: false,
+      paseoHome: path.join(tempDir, ".paseo"),
+    },
+    createDeps(),
+  );
+
+  expect(readFileSync(path.join(result.workspace.cwd, "paseo.json"), "utf8")).toBe(committedConfig);
+  expect(
+    execFileSync("git", ["status", "--porcelain"], {
+      cwd: result.worktree.worktreePath,
+      encoding: "utf8",
+    }),
+  ).toBe("");
 });
 
 test("removes a new worktree when its ref does not contain the selected project directory", async () => {
