@@ -1,6 +1,6 @@
 # Changelog
 
-## 0.9.2 - 2026-09-23
+## 0.10.0 - 2026-09-23
 
 This release merges upstream 0.9.1 into the fork. Every entry below from 0.4.0 through 0.9.1 is part of it.
 
