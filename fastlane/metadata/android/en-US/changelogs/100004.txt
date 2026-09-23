@@ -1,0 +1,9 @@
+This release merges upstream 0.9.1 into the fork. Every entry below from 0.4.0 through 0.9.1 is part of it.
+
+Added
+- Added a Grok provider for the Grok Build CLI, with reasoning-effort choices that map to the agent's own thinking options
+
+Changed
+- Split Add Project directory search into Open directory, which completes a path one segment at a time, and Search directories, which finds a directory by name
+
+Full notes: https://paseo.sh/changelog
