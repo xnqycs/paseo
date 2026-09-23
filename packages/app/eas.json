@@ -26,8 +26,13 @@
       "extends": "production",
       "distribution": "internal",
       "credentialsSource": "local",
+      "env": {
+        "APP_VARIANT": "production",
+        "NODE_OPTIONS": "--max-old-space-size=4096",
+        "GRADLE_OPTS": "-Dorg.gradle.jvmargs=\"-Xmx4g -XX:MaxMetaspaceSize=1g -Dfile.encoding=UTF-8\" -Dorg.gradle.parallel=false -Dorg.gradle.workers.max=1 -Dkotlin.compiler.execution.strategy=in-process"
+      },
       "android": {
-        "resourceClass": "large",
+        "resourceClass": "medium",
         "buildType": "apk",
         "gradleCommand": ":app:assembleRelease -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
       }
