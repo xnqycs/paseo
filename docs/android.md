@@ -212,6 +212,8 @@ Beta tags like `v0.1.1-beta.1` only trigger the GitHub APK workflow. They publis
 
 `android-v*` tags also trigger only the GitHub APK workflow — useful when you want to ship an APK without going through stores. The GitHub APK workflow supports `workflow_dispatch` with an existing `tag` input so you can rebuild without cutting a new tag.
 
+**In the fork, the APK job is skipped.** `publish-android-apk` builds on EAS and needs an Expo account this fork does not have, so the job carries a `github.repository == 'getpaseo/paseo'` guard and every fork APK comes from a local build: `expo prebuild` plus `./gradlew :app:assembleRelease`. Build it from `packages/app` with the local release keystore in `packages/app/credentials.json`, then attach the APK with `gh release upload vX.Y.Z <apk> --clobber`. Keep the serial, daemon-free Gradle flags from [Local build + install](#local-build--install); the default parallel workers are what kill the release bundle on a memory-tight machine.
+
 ### Useful commands
 
 ```bash

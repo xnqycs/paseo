@@ -64,6 +64,7 @@ jobs:
 
   publish-android-apk:
     needs: [ensure-release]
+    if: ${{ github.repository == 'getpaseo/paseo' }}
     permissions:
       contents: write
       packages: read

@@ -10,6 +10,7 @@ const nixWorkflowPath = new URL(".github/workflows/nix.yml", repoRoot);
 const nixUpdateHashWorkflowPath = new URL(".github/workflows/nix-update-hash.yml", repoRoot);
 const deployWebsiteWorkflowPath = new URL(".github/workflows/deploy-website.yml", repoRoot);
 const deployAppWorkflowPath = new URL(".github/workflows/deploy-app.yml", repoRoot);
+const androidApkReleaseWorkflowPath = new URL(".github/workflows/android-apk-release.yml", repoRoot);
 const filtersPath = new URL(".github/ci-paths.yml", repoRoot);
 const serverTsconfigPath = new URL("packages/server/tsconfig.server.json", repoRoot);
 const desktopPackagePath = new URL("packages/desktop/package.json", repoRoot);
@@ -299,6 +300,7 @@ test("official deployment jobs do not run in forks without upstream secrets", ()
     [nixUpdateHashWorkflowPath, "update-hash"],
     [deployWebsiteWorkflowPath, "deploy"],
     [deployAppWorkflowPath, "deploy"],
+    [androidApkReleaseWorkflowPath, "publish-android-apk"],
   ];
 
   for (const [workflowPath, jobId] of workflows) {
