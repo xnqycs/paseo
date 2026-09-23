@@ -1,0 +1,26 @@
+name: EAS Diagnose
+
+on:
+  workflow_dispatch:
+
+jobs:
+  diagnose:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Setup Expo and EAS
+        uses: expo/expo-github-action@v8
+        with:
+          eas-version: latest
+          token: ${{ secrets.EXPO_TOKEN }}
+
+      - name: List recent Android builds
+        shell: bash
+        run: |
+          cd packages/app
+          npx eas build:list --platform android --limit 3 --non-interactive --json

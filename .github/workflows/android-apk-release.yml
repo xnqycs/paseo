@@ -123,11 +123,19 @@ jobs:
         id: eas_build
         shell: bash
         run: |
-          set -euo pipefail
+          set -uo pipefail
           cd packages/app
 
           build_json="$(npx eas build --platform android --profile production-apk --non-interactive --wait --json)"
-          echo "$build_json" > "$RUNNER_TEMP/eas-build.json"
+          build_status=$?
+          printf '%s' "$build_json" > "$RUNNER_TEMP/eas-build.json"
+          echo "$build_json"
+
+          if [[ $build_status -ne 0 ]]; then
+            echo "::error::EAS build failed. Latest build:"
+            npx eas build:list --platform android --limit 1 --non-interactive --json 2>/dev/null || true
+            exit "$build_status"
+          fi
 
           build_id="$(jq -r 'if type == "array" then .[0].id // empty else .id // empty end' "$RUNNER_TEMP/eas-build.json")"
           if [ -z "$build_id" ]; then
