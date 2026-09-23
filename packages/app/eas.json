@@ -34,7 +34,7 @@
       "android": {
         "resourceClass": "medium",
         "buildType": "apk",
-        "gradleCommand": ":app:assembleRelease -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel"
+        "gradleCommand": ":app:assembleRelease -x lint -x lintVitalAnalyzeRelease -x lintVitalRelease -x generateReleaseLintModel -x generateReleaseLintVitalModel -PreactNativeArchitectures=arm64-v8a"
       }
     }
   },

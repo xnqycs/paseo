@@ -126,14 +126,14 @@ jobs:
           set -uo pipefail
           cd packages/app
 
-          build_json="$(npx eas build --platform android --profile production-apk --non-interactive --wait --json)"
-          build_status=$?
+          build_status=0
+          build_json="$(npx eas build --platform android --profile production-apk --non-interactive --wait --json)" || build_status=$?
           printf '%s' "$build_json" > "$RUNNER_TEMP/eas-build.json"
           echo "$build_json"
 
           if [[ $build_status -ne 0 ]]; then
             echo "::error::EAS build failed. Latest build:"
-            npx eas build:list --platform android --limit 1 --non-interactive --json 2>/dev/null || true
+            npx eas build:list --platform android --limit 1 --non-interactive --json || true
             exit "$build_status"
           fi
 
